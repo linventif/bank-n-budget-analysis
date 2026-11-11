@@ -1,6 +1,9 @@
+mod ai;
+mod categorize;
 mod config;
 mod db;
 mod eb;
+mod merchant;
 mod sync;
 mod web;
 
@@ -18,6 +21,9 @@ pub struct AppState {
     pub syncing: AtomicBool,
     pub last_sync_message: Mutex<Option<String>>,
     pub aspsp_cache: tokio::sync::Mutex<Option<(Instant, Vec<eb::Aspsp>)>>,
+    pub ai: Option<ai::Client>,
+    pub classifying: AtomicBool,
+    pub ai_progress: Mutex<categorize::AiProgress>,
 }
 
 #[tokio::main]
@@ -27,7 +33,10 @@ async fn main() -> Result<()> {
         .init();
 
     let cfg = config::Config::load()?;
-    let conn = db::open(&cfg.server.database)?;
+    let mut conn = db::open(&cfg.server.database)?;
+    let n = categorize::backfill_merchants(&conn)?;
+    let stats = categorize::apply_deterministic(&mut conn)?;
+    tracing::info!(merchants_backfilled = n, ?stats, "catégorisation au démarrage");
 
     let eb = match &cfg.enable_banking {
         Some(e) => {
@@ -55,6 +64,8 @@ async fn main() -> Result<()> {
     );
     tracing::info!("redirect URL à déclarer chez Enable Banking : {}", cfg.redirect_url());
 
+    let ai = if cfg.ai.enabled { Some(ai::Client::new(cfg.ai.clone())?) } else { None };
+
     let state = Arc::new(AppState {
         cfg,
         db: Mutex::new(conn),
@@ -62,6 +73,9 @@ async fn main() -> Result<()> {
         syncing: AtomicBool::new(false),
         last_sync_message: Mutex::new(None),
         aspsp_cache: tokio::sync::Mutex::new(None),
+        ai,
+        classifying: AtomicBool::new(false),
+        ai_progress: Mutex::new(categorize::AiProgress::default()),
     });
 
     let public = axum::serve(public_listener, web::public::router(state.clone())).with_graceful_shutdown(shutdown());

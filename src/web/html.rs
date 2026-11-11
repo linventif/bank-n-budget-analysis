@@ -39,49 +39,13 @@ button { background:var(--accent); color:var(--bg); border:none; cursor:pointer;
 "#;
 
 pub fn page(title: &str, body: &str) -> Html<String> {
-    page_with_head(title, "", body)
-}
-
-pub fn page_with_head(title: &str, extra_head: &str, body: &str) -> Html<String> {
     Html(format!(
         "<!doctype html><html lang=\"fr\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-         <meta name=\"robots\" content=\"noindex,nofollow\">{extra_head}\
+         <meta name=\"robots\" content=\"noindex,nofollow\">\
          <title>{}</title><style>{CSS}</style></head><body><main>{body}</main></body></html>",
         esc(title)
     ))
-}
-
-/// 123456 -> "1 234,56 €"
-pub fn money(cents: i64, currency: &str) -> String {
-    let sign = if cents < 0 { "−" } else { "" };
-    let abs = cents.unsigned_abs();
-    let int = (abs / 100).to_string();
-    let mut grouped = String::new();
-    for (i, c) in int.chars().enumerate() {
-        if i > 0 && (int.len() - i) % 3 == 0 {
-            grouped.push('\u{202f}');
-        }
-        grouped.push(c);
-    }
-    let symbol = match currency {
-        "EUR" => "€",
-        "USD" => "$",
-        "GBP" => "£",
-        other => other,
-    };
-    format!("{sign}{grouped},{:02}\u{a0}{}", abs % 100, esc(symbol))
-}
-
-/// "FR7630001007941234567890185" -> "FR76 … 0185"
-pub fn mask_iban(iban: &str) -> String {
-    let c: Vec<char> = iban.chars().filter(|c| !c.is_whitespace()).collect();
-    if c.len() <= 8 {
-        return esc(&c.iter().collect::<String>());
-    }
-    let head: String = c[..4].iter().collect();
-    let tail: String = c[c.len() - 4..].iter().collect();
-    esc(&format!("{head} … {tail}"))
 }
 
 #[cfg(test)]
@@ -89,11 +53,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn formats() {
-        assert_eq!(money(123456, "EUR"), "1\u{202f}234,56\u{a0}€");
-        assert_eq!(money(-7, "EUR"), "−0,07\u{a0}€");
-        assert_eq!(money(100000000, "EUR"), "1\u{202f}000\u{202f}000,00\u{a0}€");
-        assert_eq!(mask_iban("FR76 3000 1007 9412 3456 7890 185"), "FR76 … 0185");
+    fn escaping() {
         assert_eq!(esc("<a href=\"x\">'&"), "&lt;a href=&quot;x&quot;&gt;&#39;&amp;");
     }
 }

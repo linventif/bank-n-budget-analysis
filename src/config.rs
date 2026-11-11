@@ -11,6 +11,36 @@ pub struct Config {
     /// Absent tant que l'application Enable Banking n'est pas enregistrée :
     /// le serveur démarre quand même (pages publiques /terms et /privacy).
     pub enable_banking: Option<EnableBanking>,
+    #[serde(default)]
+    pub ai: Ai,
+}
+
+/// Modèle local servi par Ollama pour classer les opérations.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
+pub struct Ai {
+    pub enabled: bool,
+    pub url: String,
+    pub model: String,
+    /// Nombre de marchands envoyés par requête.
+    pub batch_size: usize,
+    pub num_ctx: u32,
+    pub timeout_secs: u64,
+    pub disable_thinking: bool,
+}
+
+impl Default for Ai {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            url: "http://127.0.0.1:11434".into(),
+            model: "gemma3:4b".into(),
+            batch_size: 15,
+            num_ctx: 8192,
+            timeout_secs: 300,
+            disable_thinking: true,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -25,6 +55,9 @@ pub struct Server {
     pub public_url: String,
     #[serde(default = "default_database")]
     pub database: PathBuf,
+    /// Frontend compilé (Solid) servi sur l'interface privée.
+    #[serde(default = "default_web_dir")]
+    pub web_dir: PathBuf,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -55,6 +88,9 @@ fn default_local_addr() -> SocketAddr {
 fn default_database() -> PathBuf {
     "data/bank.db".into()
 }
+fn default_web_dir() -> PathBuf {
+    "web/dist".into()
+}
 fn default_countries() -> Vec<String> {
     vec!["FR".into()]
 }
@@ -81,6 +117,8 @@ impl Config {
             bail!("public_addr et local_addr doivent utiliser des ports différents");
         }
         cfg.server.database = expand_home(&cfg.server.database);
+        cfg.server.web_dir = expand_home(&cfg.server.web_dir);
+        cfg.ai.url = cfg.ai.url.trim_end_matches('/').to_string();
         if let Some(eb) = cfg.enable_banking.as_mut() {
             eb.private_key = expand_home(&eb.private_key);
             for c in eb.countries.iter_mut() {

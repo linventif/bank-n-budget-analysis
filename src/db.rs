@@ -59,7 +59,92 @@ CREATE TABLE transactions (
     UNIQUE (account_hash, fingerprint)
 );
 CREATE INDEX transactions_date ON transactions (account_hash, booking_date);
+"#, r#"
+CREATE TABLE categories (
+    id           INTEGER PRIMARY KEY,
+    name         TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    icon         TEXT NOT NULL,                    -- nom Iconify, ex. lucide:shopping-cart
+    kind         TEXT NOT NULL CHECK (kind IN ('expense', 'income', 'transfer')),
+    description  TEXT NOT NULL DEFAULT '',         -- aide l'IA à choisir
+    budget_cents INTEGER,                          -- budget mensuel (catégories de dépenses)
+    position     INTEGER NOT NULL DEFAULT 0,
+    role         TEXT UNIQUE                       -- 'internal' | 'savings' : utilisé par la détection des virements
+);
+
+-- « Si le libellé contient <pattern>, alors <catégorie> » (insensible à la casse).
+CREATE TABLE rules (
+    id          INTEGER PRIMARY KEY,
+    pattern     TEXT NOT NULL,
+    category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    created_at  TEXT NOT NULL
+);
+
+ALTER TABLE transactions ADD COLUMN merchant TEXT;              -- libellé normalisé (clé marchand)
+ALTER TABLE transactions ADD COLUMN category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL;
+ALTER TABLE transactions ADD COLUMN category_source TEXT;       -- user | rule | memory | transfer | ai
+ALTER TABLE transactions ADD COLUMN category_confidence REAL;
+ALTER TABLE transactions ADD COLUMN day TEXT
+    GENERATED ALWAYS AS (COALESCE(booking_date, value_date, transaction_date)) VIRTUAL;
+CREATE INDEX transactions_day ON transactions (day);
+CREATE INDEX transactions_merchant ON transactions (merchant);
+CREATE INDEX transactions_category ON transactions (category_id);
+
+-- Vue unique pour toutes les analyses : une opération sans catégorie compte comme
+-- dépense (débit) ou revenu (crédit) ; les montants nuls (pré-autorisations) sont ignorés.
+CREATE VIEW ledger AS
+SELECT t.id, t.account_hash, t.day, substr(t.day, 1, 7) AS month, t.amount_cents, t.currency,
+       t.label, t.counterparty, t.merchant, t.status, t.category_id, t.category_source,
+       t.category_confidence,
+       COALESCE(c.kind, CASE WHEN t.amount_cents < 0 THEN 'expense' ELSE 'income' END) AS kind
+FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
+WHERE t.amount_cents <> 0 AND t.day IS NOT NULL;
 "#];
+
+/// Catégories proposées au départ (toutes modifiables). Les descriptions guident l'IA.
+const DEFAULT_CATEGORIES: &[(&str, &str, &str, &str)] = &[
+    ("Courses", "lucide:shopping-cart", "expense", "supermarchés, épiceries, boulangeries, marchés (Lidl, Carrefour, Auchan, Leclerc, Intermarché, Monoprix, Franprix, Picard)"),
+    ("Restaurants & bars", "lucide:utensils", "expense", "restaurants, fast-food, cafés, bars, kebabs, livraison de repas (Uber Eats, Deliveroo), restaurant universitaire (RU)"),
+    ("Logement", "lucide:house", "expense", "loyer, charges, colocation, assurance habitation"),
+    ("Énergie & eau", "lucide:zap", "expense", "électricité, gaz, eau (EDF, Engie, TotalEnergies électricité, Veolia)"),
+    ("Téléphone & internet", "lucide:smartphone", "expense", "forfait mobile, box internet (Free, Orange, SFR, Bouygues, Sosh, RED)"),
+    ("Transports", "lucide:train-front", "expense", "train, métro, bus, tram, VTC, taxi, vélos et trottinettes en libre-service (SNCF, RATP, Tisséo, Ilévia, Uber, Bolt, Lime, BlaBlaCar)"),
+    ("Carburant & péages", "lucide:fuel", "expense", "stations-service, péages, recharge électrique (Total, Shell, Esso, BP, Avia, Vinci Autoroutes, Sanef)"),
+    ("Véhicule", "lucide:car", "expense", "entretien, réparation, contrôle technique, parking, assurance auto, location de voiture"),
+    ("Voyages", "lucide:plane", "expense", "billets d'avion, hôtels, locations de vacances (Airbnb, Booking), séjours"),
+    ("Abonnements & services en ligne", "lucide:repeat", "expense", "streaming, logiciels, cloud, IA, applications, presse en ligne (Netflix, Spotify, Deezer, Apple, Google, GitHub, Anthropic, OpenAI)"),
+    ("Shopping", "lucide:shopping-bag", "expense", "vêtements, chaussures, high-tech, achats en ligne, grands magasins (Amazon, Fnac, Decathlon, Zara, AliExpress)"),
+    ("Maison & bricolage", "lucide:hammer", "expense", "meubles, décoration, bricolage, jardinage, électroménager (Ikea, Leroy Merlin, Castorama, Action)"),
+    ("Santé", "lucide:heart-pulse", "expense", "pharmacie, médecin, dentiste, opticien, laboratoire, mutuelle, matériel médical"),
+    ("Sport", "lucide:dumbbell", "expense", "salle de sport, clubs, licences, équipement sportif (Basic Fit, Fitness Park, On Air)"),
+    ("Loisirs & sorties", "lucide:ticket", "expense", "cinéma, concerts, musées, jeux vidéo, livres, hobbies, soirées"),
+    ("Beauté & soins", "lucide:sparkles", "expense", "coiffeur, barbier, cosmétiques, soins du corps"),
+    ("Éducation", "lucide:graduation-cap", "expense", "frais de scolarité, inscriptions, cours, formations, fournitures"),
+    ("Cadeaux & dons", "lucide:gift", "expense", "cadeaux offerts, dons, cagnottes"),
+    ("Frais bancaires", "lucide:landmark", "expense", "cotisations de carte ou de compte, commissions, agios, frais de change"),
+    ("Impôts & taxes", "lucide:receipt-text", "expense", "impôt sur le revenu, taxes, amendes, frais administratifs"),
+    ("Assurances", "lucide:shield-check", "expense", "assurances hors logement et véhicule (prévoyance, assurance de prêt, assurance appareil)"),
+    ("Retraits d'espèces", "lucide:banknote", "expense", "retraits d'argent liquide au distributeur (DAB, RETRAIT)"),
+    ("Crédits & paiements fractionnés", "lucide:calendar-clock", "expense", "remboursements de prêt, crédits, paiements en plusieurs fois (PayPal 4x, Alma, Klarna, Oney)"),
+    ("Animaux", "lucide:paw-print", "expense", "vétérinaire, nourriture et accessoires pour animaux"),
+    ("Autres dépenses", "lucide:circle-ellipsis", "expense", "dépenses qui ne rentrent dans aucune autre catégorie"),
+    ("Salaire", "lucide:briefcase-business", "income", "salaire, paie, gratification de stage, primes, indemnités de travail"),
+    ("Aides & allocations", "lucide:hand-coins", "income", "CAF, APL, bourses, aides de l'État, France Travail"),
+    ("Remboursements", "lucide:undo-2", "income", "remboursements d'achats, de frais bancaires, de santé (CPAM, mutuelle, assurance), d'un proche qui rembourse sa part"),
+    ("Autres revenus", "lucide:coins", "income", "ventes (Vinted, Leboncoin), intérêts, cadeaux reçus, revenus divers"),
+    ("Virements internes", "lucide:arrow-left-right", "transfer", "virements entre mes propres comptes, rechargements de compte, conversions de devises"),
+    ("Épargne & placements", "lucide:piggy-bank", "transfer", "versements vers ou depuis un livret, une épargne, un coffre ou un compte d'investissement"),
+];
+
+fn seed_categories(tx: &rusqlite::Transaction) -> rusqlite::Result<()> {
+    let mut stmt =
+        tx.prepare("INSERT INTO categories (name, icon, kind, description, position) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+    for (i, (name, icon, kind, desc)) in DEFAULT_CATEGORIES.iter().enumerate() {
+        stmt.execute(params![name, icon, kind, desc, i as i64])?;
+    }
+    tx.execute("UPDATE categories SET role = 'internal' WHERE name = 'Virements internes'", [])?;
+    tx.execute("UPDATE categories SET role = 'savings' WHERE name = 'Épargne & placements'", [])?;
+    Ok(())
+}
 
 pub fn open(path: &Path) -> Result<Connection> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
@@ -77,6 +162,9 @@ fn migrate(conn: &mut Connection) -> Result<()> {
     for (i, sql) in MIGRATIONS.iter().enumerate().skip(current as usize) {
         let tx = conn.transaction()?;
         tx.execute_batch(sql).with_context(|| format!("migration {}", i + 1))?;
+        if i + 1 == 2 {
+            seed_categories(&tx)?;
+        }
         tx.pragma_update(None, "user_version", (i + 1) as i64)?;
         tx.commit()?;
     }
@@ -117,79 +205,4 @@ pub fn take_pending(conn: &Connection, state: &str) -> Result<Option<String>> {
             |r| r.get(0),
         )
         .optional()?)
-}
-
-// ---------- Lecture pour le tableau de bord ----------
-
-pub struct AccountRow {
-    pub aspsp_name: String,
-    pub iban: Option<String>,
-    pub name: Option<String>,
-    pub product: Option<String>,
-    pub currency: String,
-    pub balance_cents: Option<i64>,
-    pub balance_date: Option<String>,
-    pub last_sync: Option<String>,
-    pub last_error: Option<String>,
-    pub valid_until: Option<String>,
-    pub session_status: Option<String>,
-    pub tx_count: i64,
-}
-
-pub fn list_accounts(conn: &Connection) -> Result<Vec<AccountRow>> {
-    let mut stmt = conn.prepare(
-        "SELECT a.aspsp_name, a.iban, a.name, a.product, a.currency, a.balance_cents,
-                a.balance_date, a.last_sync, a.last_error, s.valid_until, s.status,
-                (SELECT COUNT(*) FROM transactions t WHERE t.account_hash = a.hash)
-         FROM accounts a LEFT JOIN sessions s ON s.session_id = a.session_id
-         ORDER BY a.aspsp_name, a.name",
-    )?;
-    let rows = stmt.query_map([], |r| {
-        Ok(AccountRow {
-            aspsp_name: r.get(0)?,
-            iban: r.get(1)?,
-            name: r.get(2)?,
-            product: r.get(3)?,
-            currency: r.get(4)?,
-            balance_cents: r.get(5)?,
-            balance_date: r.get(6)?,
-            last_sync: r.get(7)?,
-            last_error: r.get(8)?,
-            valid_until: r.get(9)?,
-            session_status: r.get(10)?,
-            tx_count: r.get(11)?,
-        })
-    })?;
-    Ok(rows.collect::<Result<_, _>>()?)
-}
-
-pub struct TxRow {
-    pub date: Option<String>,
-    pub status: String,
-    pub amount_cents: i64,
-    pub currency: String,
-    pub counterparty: Option<String>,
-    pub label: String,
-    pub account: String,
-}
-
-pub fn recent_transactions(conn: &Connection, limit: i64) -> Result<Vec<TxRow>> {
-    let mut stmt = conn.prepare(
-        "SELECT COALESCE(t.booking_date, t.value_date, t.transaction_date) AS d, t.status, t.amount_cents,
-                t.currency, t.counterparty, t.label, COALESCE(a.name, a.product, a.iban, a.aspsp_name)
-         FROM transactions t JOIN accounts a ON a.hash = t.account_hash
-         ORDER BY d DESC, t.id DESC LIMIT ?1",
-    )?;
-    let rows = stmt.query_map([limit], |r| {
-        Ok(TxRow {
-            date: r.get(0)?,
-            status: r.get(1)?,
-            amount_cents: r.get(2)?,
-            currency: r.get(3)?,
-            counterparty: r.get(4)?,
-            label: r.get(5)?,
-            account: r.get(6)?,
-        })
-    })?;
-    Ok(rows.collect::<Result<_, _>>()?)
 }

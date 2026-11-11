@@ -67,8 +67,17 @@ pub fn spawn(state: Arc<AppState>) {
             Err(e) => format!("Échec de la synchronisation : {e:#}"),
         };
         tracing::info!("{msg}");
+        // Catégorisation des nouvelles opérations : règles / mémoire / virements, puis IA en tâche de fond.
+        let cat = crate::categorize::apply_deterministic(&mut state.db.lock().unwrap());
+        match cat {
+            Ok(st) => tracing::info!(?st, "catégorisation automatique"),
+            Err(e) => tracing::warn!("catégorisation automatique en échec : {e:#}"),
+        }
         *state.last_sync_message.lock().unwrap() = Some(msg);
         state.syncing.store(false, Ordering::SeqCst);
+        if state.cfg.ai.enabled {
+            crate::categorize::spawn_ai(state.clone(), false);
+        }
     });
 }
 
@@ -171,12 +180,13 @@ async fn sync_account(state: &AppState, client: &eb::Client, t: &Target) -> Resu
 
         tx.execute(
             "INSERT INTO transactions (account_hash, fingerprint, status, booking_date, value_date, transaction_date,
-                                       amount_cents, currency, counterparty, label, mcc, raw, first_seen)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                                       amount_cents, currency, counterparty, label, mcc, raw, first_seen, merchant)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT (account_hash, fingerprint) DO UPDATE SET
                 status = excluded.status, booking_date = excluded.booking_date, value_date = excluded.value_date,
                 transaction_date = excluded.transaction_date, amount_cents = excluded.amount_cents,
-                counterparty = excluded.counterparty, label = excluded.label, mcc = excluded.mcc, raw = excluded.raw",
+                counterparty = excluded.counterparty, label = excluded.label, mcc = excluded.mcc, raw = excluded.raw,
+                merchant = excluded.merchant",
             params![
                 t.hash,
                 fingerprint,
@@ -191,6 +201,7 @@ async fn sync_account(state: &AppState, client: &eb::Client, t: &Target) -> Resu
                 tr.merchant_category_code,
                 raw.to_string(),
                 now,
+                crate::merchant::key(&n.label),
             ],
         )?;
     }

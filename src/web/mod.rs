@@ -1,3 +1,4 @@
+pub mod api;
 pub mod html;
 pub mod local;
 pub mod public;
