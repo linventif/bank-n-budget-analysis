@@ -1,0 +1,11 @@
+/target
+
+# Secrets et données bancaires : jamais dans git
+/config.toml
+/data/
+*.pem
+*.key
+*.db
+*.db-shm
+*.db-wal
+.env

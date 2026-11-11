@@ -1,0 +1,19 @@
+# Copier vers config.toml (ignoré par git) puis adapter.
+
+[server]
+# URL publique du tunnel Cloudflare (qui pointe vers public_addr).
+public_url = "https://bks.example.com"
+# public_addr = "127.0.0.1:9889"   # cible du tunnel : /terms, /privacy, /callback uniquement
+# local_addr  = "127.0.0.1:9890"   # tableau de bord : ne JAMAIS l'exposer
+# database    = "data/bank.db"
+
+[legal]
+# Adresse affichée publiquement sur /terms et /privacy.
+# contact_email = "contact@exemple.fr"
+
+# À décommenter une fois l'application créée sur https://enablebanking.com/cp/applications
+# [enable_banking]
+# app_id       = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"    # = nom du fichier .pem
+# private_key  = "~/.config/bank-analysis/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.pem"
+# country      = "FR"
+# consent_days = 180
