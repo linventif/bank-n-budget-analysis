@@ -19,15 +19,19 @@ export const store = createRoot(() => {
   const [status, setStatus] = createSignal<Status | null>(null);
   let timer: number | undefined;
   let wasBusy = false;
+  let lastLiveBump = 0;
   const poll = async () => {
     window.clearTimeout(timer);
     try {
       const s = await api.status();
       const busy = s.syncing || s.ai.progress.running;
       if (wasBusy && !busy) bump();
-      // Pendant la classification IA, rafraîchir au fil des lots.
+      // Pendant la classification IA, rafraîchir les données au plus toutes les 15 s.
       const prev = status();
-      if (s.ai.progress.running && prev && s.ai.progress.classified !== prev.ai.progress.classified) bump();
+      if (s.ai.progress.running && prev && s.ai.progress.classified !== prev.ai.progress.classified && Date.now() - lastLiveBump > 15000) {
+        lastLiveBump = Date.now();
+        bump();
+      }
       wasBusy = busy;
       setStatus(s);
       timer = window.setTimeout(poll, busy ? 2000 : 30000);
@@ -77,7 +81,12 @@ export const store = createRoot(() => {
     apply();
   };
 
+  // Panneau « classification terminée » masqué par l'utilisateur (identifié par sa date de fin).
+  const [dismissedRun, setDismissedRun] = createSignal<string | null>(null);
+
   return {
+    dismissedRun,
+    setDismissedRun,
     version,
     bump,
     categories,

@@ -3,6 +3,7 @@ import { createSignal, For, Show, type JSX } from "solid-js";
 import { api } from "../api";
 import { percent, relative } from "../format";
 import { errorText, store } from "../store";
+import { AiProgress } from "./AiProgress";
 import { Ico, Spinner } from "./ui";
 
 const NAV = [
@@ -32,7 +33,10 @@ export function Layout(props: { children?: JSX.Element }) {
             <SyncButton compact />
           </div>
         </header>
-        <main class="mx-auto w-full max-w-7xl flex-1 px-4 py-5 sm:px-6 lg:px-8 lg:py-8">{props.children}</main>
+        <main class="mx-auto w-full max-w-7xl flex-1 px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
+          <AiProgress />
+          {props.children}
+        </main>
       </div>
 
       <div class="drawer-side z-40">
@@ -103,8 +107,8 @@ function AiPill() {
             : s()?.ai.health?.model_installed
               ? s()!.ai.health!.model
               : s()?.ai.health?.reachable
-                ? "modèle à installer"
-                : "Ollama arrêté"}
+                ? "modèle non servi"
+                : `${s()?.ai.health?.provider === "ollama" ? "Ollama" : "vLLM"} arrêté`}
         </div>
       </div>
       <Show when={s()?.ai.progress.running && s()!.ai.progress.total > 0}>

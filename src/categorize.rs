@@ -7,6 +7,7 @@
 
 use crate::{AppState, ai, merchant};
 use anyhow::{Result, bail};
+use futures::StreamExt;
 use regex::Regex;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
@@ -38,7 +39,7 @@ pub struct Stats {
 const OPEN: &str = "(category_source IS NULL OR category_source = 'ai')";
 
 static SAVINGS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^(to|from|vers|depuis)\s+.*(savings|investment|invest|vault|coffre|épargne|epargne|pocket|livret)").unwrap()
+    Regex::new(r"(?i)^(to|from|vers|depuis)\s+.*(savings|investment|invest|vault|coffre|épargne|epargne|pocket|livret|portfolio|robo|crypto|bourse|stocks)").unwrap()
 });
 /// Poches et changes de devises Revolut : « To EUR », « Exchanged to EUR ».
 static POCKET: LazyLock<Regex> = LazyLock::new(|| {
@@ -209,20 +210,47 @@ fn parse_day(s: &str) -> Option<chrono::NaiveDate> {
 #[derive(Default, Clone, Serialize)]
 pub struct AiProgress {
     pub running: bool,
+    /// Marchands traités (classés ou non).
     pub done: usize,
     pub total: usize,
     pub classified: usize,
+    /// Opérations concernées par les marchands classés.
+    pub transactions: usize,
+    pub batches_total: usize,
+    pub batches_done: usize,
+    pub failures: usize,
+    pub model: Option<String>,
     pub message: Option<String>,
+    pub started_at: Option<String>,
     pub finished_at: Option<String>,
+    /// Derniers classements, le plus récent d'abord.
+    pub recent: Vec<AiDecision>,
 }
+
+#[derive(Clone, Serialize)]
+pub struct AiDecision {
+    pub merchant: String,
+    pub debit: bool,
+    pub category_id: i64,
+    pub confidence: f64,
+    pub count: usize,
+}
+
+const RECENT_MAX: usize = 8;
 
 /// Lance la classification IA en tâche de fond (sauf si déjà en cours).
 pub fn spawn_ai(state: Arc<AppState>, reclassify: bool) {
     if state.ai.is_none() || state.classifying.swap(true, Ordering::SeqCst) {
         return;
     }
+    state.ai_cancel.store(false, Ordering::SeqCst);
     tokio::spawn(async move {
-        *state.ai_progress.lock().unwrap() = AiProgress { running: true, ..Default::default() };
+        *state.ai_progress.lock().unwrap() = AiProgress {
+            running: true,
+            started_at: Some(crate::db::now()),
+            model: state.ai.as_ref().map(|a| a.model().to_string()),
+            ..Default::default()
+        };
         let result = run_ai(&state, reclassify).await;
         let mut p = state.ai_progress.lock().unwrap();
         p.running = false;
@@ -258,10 +286,10 @@ async fn run_ai(state: &AppState, reclassify: bool) -> Result<String> {
     let Some(client) = state.ai.as_ref() else { bail!("IA désactivée") };
     let health = client.health().await;
     if !health.reachable {
-        bail!("Ollama ne répond pas ({})", state.cfg.ai.url);
+        bail!("le serveur IA ({}) ne répond pas : {}", health.url, client.setup_hint());
     }
     if !health.model_installed {
-        bail!("le modèle {} n'est pas installé : ollama pull {}", client.model(), client.model());
+        bail!("le modèle {} n'est pas servi par {} ({})", client.model(), health.url, client.setup_hint());
     }
 
     let (cats, examples, groups) = {
@@ -322,62 +350,75 @@ async fn run_ai(state: &AppState, reclassify: bool) -> Result<String> {
     {
         let mut p = state.ai_progress.lock().unwrap();
         p.total = groups.len();
+        p.batches_total = batches.len();
         p.message = Some(format!("{} marchands à classer avec {}", groups.len(), client.model()));
     }
 
-    let mut classified = 0usize;
-    let mut failures = 0usize;
-    for (debit, batch) in &batches {
-        let allowed: Vec<&Cat> = cats
-            .iter()
-            .filter(|c| c.kind == "transfer" || c.kind == if *debit { "expense" } else { "income" })
-            .collect();
-        let choices: Vec<ai::Choice> =
-            allowed.iter().map(|c| ai::Choice { name: &c.name, description: &c.description }).collect();
-        let items: Vec<ai::Item> = batch
-            .iter()
-            .enumerate()
-            .map(|(i, g)| ai::Item {
-                i,
-                libelle: g.label.clone(),
-                contrepartie: g.counterparty.clone().filter(|c| !g.label.to_uppercase().contains(&c.to_uppercase())),
-                montant: (g.avg_cents / 100.0 * 100.0).round() / 100.0,
-                kind: g.code.clone(),
-                nb: g.count,
-            })
-            .collect();
-        let direction = if *debit { "débits : argent qui sort" } else { "crédits : argent qui entre" };
+    // Préparation des requêtes (prompt par lot), puis envoi avec `concurrency` lots en vol.
+    let prepared: Vec<Prepared> = batches
+        .into_iter()
+        .map(|(debit, batch)| {
+            let allowed: Vec<&Cat> = cats
+                .iter()
+                .filter(|c| c.kind == "transfer" || c.kind == if debit { "expense" } else { "income" })
+                .collect();
+            let items = batch
+                .iter()
+                .enumerate()
+                .map(|(i, g)| ai::Item {
+                    i,
+                    libelle: g.label.clone(),
+                    contrepartie: g.counterparty.clone().filter(|c| !g.label.to_uppercase().contains(&c.to_uppercase())),
+                    montant: (g.avg_cents / 100.0 * 100.0).round() / 100.0,
+                    kind: g.code.clone(),
+                    nb: g.count,
+                })
+                .collect();
+            Prepared { debit, batch, allowed, items }
+        })
+        .collect();
 
-        let started = std::time::Instant::now();
-        match client.classify(&choices, &examples, &items, direction).await {
-            Ok(answers) => {
-                let conn = state.db.lock().unwrap();
-                let mut upd = conn.prepare(
-                    "UPDATE transactions SET category_id = ?1, category_source = 'ai', category_confidence = ?2
-                     WHERE merchant = ?3 AND (amount_cents < 0) = ?4 AND category_id IS NULL",
-                )?;
-                for a in answers {
-                    let (Some(g), Some(cat)) = (
-                        batch.get(a.i),
-                        allowed.iter().find(|c| c.name.eq_ignore_ascii_case(a.categorie.trim())),
-                    ) else {
-                        continue;
-                    };
-                    let conf = a.confiance.unwrap_or(0.5).clamp(0.0, 1.0);
-                    if upd.execute(params![cat.id, conf, g.merchant, g.debit])? > 0 {
-                        classified += 1;
-                    }
+    let mut queue = prepared.iter().enumerate();
+    let mut in_flight = futures::stream::FuturesUnordered::new();
+    for (i, p) in queue.by_ref().take(client.concurrency()) {
+        in_flight.push(classify_batch(state, client, &examples, p, i));
+    }
+    let mut cancelled = false;
+    loop {
+        // Vérifie la demande d'arrêt toutes les 500 ms sans attendre la fin d'un lot
+        // (`FuturesUnordered::next` peut être abandonné sans perte).
+        let next = tokio::select! {
+            r = in_flight.next() => r,
+            _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                if state.ai_cancel.load(Ordering::SeqCst) {
+                    cancelled = true;
+                    break;
                 }
+                continue;
             }
-            Err(e) => {
-                failures += 1;
-                tracing::warn!("lot IA en échec : {e:#}");
-            }
+        };
+        let Some((idx, reported, result)) = next else { break };
+        if let Some((i, q)) = queue.next() {
+            in_flight.push(classify_batch(state, client, &examples, q, i));
         }
-        tracing::info!("lot IA de {} marchands en {:.1}s", batch.len(), started.elapsed().as_secs_f32());
-        let mut p = state.ai_progress.lock().unwrap();
-        p.done += batch.len();
-        p.classified = classified;
+        let p = &prepared[idx];
+        let mut prog = state.ai_progress.lock().unwrap();
+        // Les marchands sans réponse comptent comme traités (restent « non classés »).
+        prog.done += p.batch.len().saturating_sub(reported);
+        prog.batches_done += 1;
+        if let Err(e) = result {
+            prog.failures += 1;
+            tracing::warn!("lot IA en échec : {e:#}");
+        }
+    }
+    // Abandon des requêtes encore en vol : la connexion est fermée, le serveur les annule.
+    drop(in_flight);
+    let (classified, failures) = {
+        let prog = state.ai_progress.lock().unwrap();
+        (prog.classified, prog.failures)
+    };
+    if cancelled {
+        return Ok(format!("Classification arrêtée : {classified} marchand(s) classé(s) sur {}", groups.len()));
     }
 
     let mut msg = format!("IA : {classified} marchand(s) classé(s) sur {}", groups.len());
@@ -385,4 +426,62 @@ async fn run_ai(state: &AppState, reclassify: bool) -> Result<String> {
         msg += &format!(" ({failures} lot(s) en échec, voir les logs)");
     }
     Ok(msg)
+}
+
+struct Prepared<'a> {
+    debit: bool,
+    batch: Vec<&'a Group>,
+    allowed: Vec<&'a Cat>,
+    items: Vec<ai::Item>,
+}
+
+async fn classify_batch(
+    state: &AppState,
+    client: &ai::Client,
+    examples: &[(String, String)],
+    p: &Prepared<'_>,
+    idx: usize,
+) -> (usize, usize, Result<()>) {
+    let choices: Vec<ai::Choice> =
+        p.allowed.iter().map(|c| ai::Choice { name: &c.name, description: &c.description }).collect();
+    let direction = if p.debit { "débits : argent qui sort" } else { "crédits : argent qui entre" };
+    let started = std::time::Instant::now();
+    let reported = std::sync::atomic::AtomicUsize::new(0);
+    let apply = |a: &ai::Answer| {
+        if let Err(e) = apply_answer(state, p, a) {
+            tracing::warn!("réponse IA non appliquée : {e:#}");
+        }
+        reported.fetch_add(1, Ordering::SeqCst);
+    };
+    let r = client.classify(&choices, examples, &p.items, direction, &apply).await;
+    tracing::info!("lot IA de {} marchands en {:.1}s", p.batch.len(), started.elapsed().as_secs_f32());
+    (idx, reported.load(Ordering::SeqCst), r.map(|_| ()))
+}
+
+/// Enregistre une réponse du modèle et met à jour l'avancement visible dans l'interface.
+fn apply_answer(state: &AppState, p: &Prepared<'_>, a: &ai::Answer) -> Result<()> {
+    let group = p.batch.get(a.i);
+    let cat = p.allowed.iter().find(|c| c.name.eq_ignore_ascii_case(a.categorie.trim()));
+    // Certains modèles répondent sur 100 malgré la consigne.
+    let conf = a.confiance.map(|c| if c > 1.0 { c / 100.0 } else { c }).unwrap_or(0.5).clamp(0.0, 1.0);
+    let updated = match (group, cat) {
+        (Some(g), Some(c)) => state.db.lock().unwrap().execute(
+            "UPDATE transactions SET category_id = ?1, category_source = 'ai', category_confidence = ?2
+             WHERE merchant = ?3 AND (amount_cents < 0) = ?4 AND category_id IS NULL",
+            params![c.id, conf, g.merchant, g.debit],
+        )?,
+        _ => 0,
+    };
+    let mut prog = state.ai_progress.lock().unwrap();
+    prog.done += 1;
+    if let (Some(g), Some(c), true) = (group, cat, updated > 0) {
+        prog.classified += 1;
+        prog.transactions += updated;
+        prog.recent.insert(
+            0,
+            AiDecision { merchant: g.merchant.clone(), debit: g.debit, category_id: c.id, confidence: conf, count: updated },
+        );
+        prog.recent.truncate(RECENT_MAX);
+    }
+    Ok(())
 }

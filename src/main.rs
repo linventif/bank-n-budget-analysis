@@ -23,6 +23,8 @@ pub struct AppState {
     pub aspsp_cache: tokio::sync::Mutex<Option<(Instant, Vec<eb::Aspsp>)>>,
     pub ai: Option<ai::Client>,
     pub classifying: AtomicBool,
+    /// Demande d'arrêt de la classification en cours.
+    pub ai_cancel: AtomicBool,
     pub ai_progress: Mutex<categorize::AiProgress>,
 }
 
@@ -75,6 +77,7 @@ async fn main() -> Result<()> {
         aspsp_cache: tokio::sync::Mutex::new(None),
         ai,
         classifying: AtomicBool::new(false),
+        ai_cancel: AtomicBool::new(false),
         ai_progress: Mutex::new(categorize::AiProgress::default()),
     });
 

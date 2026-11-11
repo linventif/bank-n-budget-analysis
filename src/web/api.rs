@@ -33,6 +33,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/rules/{id}", delete(delete_rule))
         .route("/sync", post(start_sync))
         .route("/classify", post(start_classify))
+        .route("/classify/cancel", post(cancel_classify))
         .route("/banks", get(banks))
         .route("/connect", post(connect))
 }
@@ -964,6 +965,14 @@ async fn start_classify(State(app): State<Arc<AppState>>, body: Option<Json<Clas
         categorize::spawn_ai(app.clone(), reclassify);
     }
     Ok(Json(json!({ "stats": stats, "ai_started": ai })))
+}
+
+async fn cancel_classify(State(app): State<Arc<AppState>>) -> ApiResult<Value> {
+    let running = app.classifying.load(Ordering::SeqCst);
+    if running {
+        app.ai_cancel.store(true, Ordering::SeqCst);
+    }
+    Ok(Json(json!({ "cancelling": running })))
 }
 
 // ---------- Connexion bancaire ----------

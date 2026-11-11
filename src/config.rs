@@ -15,15 +15,22 @@ pub struct Config {
     pub ai: Ai,
 }
 
-/// Modèle local servi par Ollama pour classer les opérations.
+/// Modèle local (vLLM ou toute API compatible OpenAI, ou Ollama) pour classer les opérations.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct Ai {
     pub enabled: bool,
+    /// "vllm" (API compatible OpenAI) ou "ollama".
+    pub provider: String,
+    /// vLLM : http://127.0.0.1:8000/v1 ; Ollama : http://127.0.0.1:11434
     pub url: String,
     pub model: String,
+    pub api_key: Option<String>,
     /// Nombre de marchands envoyés par requête.
     pub batch_size: usize,
+    /// Requêtes simultanées (vLLM les traite en lot).
+    pub concurrency: usize,
+    /// Ollama uniquement.
     pub num_ctx: u32,
     pub timeout_secs: u64,
     pub disable_thinking: bool,
@@ -33,11 +40,14 @@ impl Default for Ai {
     fn default() -> Self {
         Self {
             enabled: true,
-            url: "http://127.0.0.1:11434".into(),
-            model: "gemma3:4b".into(),
-            batch_size: 15,
+            provider: "vllm".into(),
+            url: "http://127.0.0.1:8000/v1".into(),
+            model: "Qwen/Qwen3-4B-AWQ".into(),
+            api_key: None,
+            batch_size: 12,
+            concurrency: 2,
             num_ctx: 8192,
-            timeout_secs: 300,
+            timeout_secs: 600,
             disable_thinking: true,
         }
     }

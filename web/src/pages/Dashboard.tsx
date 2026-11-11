@@ -226,15 +226,8 @@ function ReviewBanner() {
           </A>
         </Show>
         <Show when={(counts()?.uncategorized ?? 0) > 0}>
-          <Show
-            when={!ai()?.progress.running}
-            fallback={
-              <span class="text-muted flex items-center gap-2 text-sm">
-                <Spinner class="loading-xs" /> IA : {ai()!.progress.done}/{ai()!.progress.total}
-              </span>
-            }
-          >
-            <button class="btn btn-sm btn-primary" onClick={classify} disabled={!ai()?.health?.model_installed} title={ai()?.health?.model_installed ? "" : "Installe Ollama et le modèle (page Comptes & IA)"}>
+          <Show when={!ai()?.progress.running}>
+            <button class="btn btn-sm btn-primary" onClick={classify} disabled={!ai()?.health?.model_installed} title={ai()?.health?.model_installed ? "" : "Démarre le serveur IA (voir Comptes & IA)"}>
               <Ico icon="lucide:sparkles" /> Classer avec l'IA
             </button>
           </Show>

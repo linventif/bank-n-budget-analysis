@@ -10,7 +10,7 @@ et classement des dépenses par un modèle d'IA **local**.
 Internet ── Cloudflare tunnel (bks.example.com) ──▶ 127.0.0.1:9889   /terms /privacy /callback
 Navigateur local ───────────────────────────────▶ 127.0.0.1:9890   frontend Solid + /api (jamais exposé)
                                                       │
-                          data/bank.db (SQLite, chmod 600)   Ollama 127.0.0.1:11434 (IA locale)
+                          data/bank.db (SQLite, chmod 600)   vLLM 127.0.0.1:8000 (IA locale)
 ```
 
 - **Backend** Rust (axum, rusqlite) — `src/`
@@ -26,12 +26,16 @@ cp config.example.toml config.toml        # puis remplir
 cargo run --release                       # http://localhost:9890
 ```
 
-IA locale (facultative, mais c'est elle qui classe les marchands inconnus) :
+IA locale (facultative, mais c'est elle qui classe les marchands inconnus) : vLLM sur CPU,
+dans Docker, avec Qwen3-4B quantifié AWQ (~9 Go de RAM une fois chargé) :
 
 ```bash
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull gemma3:4b
+./scripts/vllm.sh start     # 1er lancement : téléchargement du modèle, puis 2 à 4 min de chargement
+./scripts/vllm.sh stop      # libère la mémoire quand on n'en a pas besoin
 ```
+
+Le port 8000 n'est publié que sur 127.0.0.1. Tout autre serveur compatible OpenAI convient
+(`[ai] provider = "vllm"`, `url = …/v1`), ainsi qu'Ollama (`provider = "ollama"`).
 
 Développement du frontend avec rechargement à chaud : `cd web && pnpm dev` (<http://localhost:5173>,
 l'API est relayée vers le serveur Rust sur 9890).
@@ -57,7 +61,7 @@ Par ordre de priorité (une étape ne touche jamais ce qu'une étape plus priori
 3. **Mémoire** — même marchand (libellé normalisé) qu'une opération classée à la main.
 4. **Virements internes / épargne** — à son propre nom, paires débit/crédit entre ses comptes,
    poches et coffres Revolut.
-5. **IA locale** — Ollama, un appel par lot de marchands (pas par opération), sortie contrainte
+5. **IA locale** — vLLM (ou Ollama), un appel par lot de marchands (pas par opération), sortie contrainte
    par un schéma JSON dont l'énumération ne contient que les catégories cohérentes avec le sens
    de l'opération. Les classements à confiance < 0,6 sont marqués « À vérifier ».
 

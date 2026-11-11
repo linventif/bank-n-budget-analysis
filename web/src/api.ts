@@ -122,13 +122,28 @@ export interface CatStats {
   remaining: number;
 }
 
+export interface AiDecision {
+  merchant: string;
+  debit: boolean;
+  category_id: number;
+  confidence: number;
+  count: number;
+}
+
 export interface AiProgress {
   running: boolean;
   done: number;
   total: number;
   classified: number;
+  transactions: number;
+  batches_total: number;
+  batches_done: number;
+  failures: number;
+  model: string | null;
   message: string | null;
+  started_at: string | null;
   finished_at: string | null;
+  recent: AiDecision[];
 }
 
 export interface Status {
@@ -137,7 +152,7 @@ export interface Status {
   enable_banking: boolean;
   ai: {
     enabled: boolean;
-    health: { reachable: boolean; model_installed: boolean; model: string; models: string[] } | null;
+    health: { provider: "vllm" | "ollama"; url: string; reachable: boolean; model_installed: boolean; model: string; models: string[] } | null;
     progress: AiProgress;
   };
   counts: { transactions: number; uncategorized: number; to_review: number };
@@ -206,6 +221,7 @@ export const api = {
     call<{ id: number; stats: CatStats }>("POST", "/rules", { pattern, category_id }),
   deleteRule: (id: number) => call<{ ok: true }>("DELETE", `/rules/${id}`),
   sync: () => call<{ started: boolean }>("POST", "/sync", {}),
+  cancelClassify: () => call<{ cancelling: boolean }>("POST", "/classify/cancel", {}),
   classify: (reclassify = false) => call<{ stats: CatStats; ai_started: boolean }>("POST", "/classify", { reclassify }),
   banks: () => call<Bank[]>("GET", "/banks"),
   connect: (name: string, country: string) => call<{ url: string }>("POST", "/connect", { name, country }),

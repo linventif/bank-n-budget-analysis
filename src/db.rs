@@ -98,6 +98,25 @@ SELECT t.id, t.account_hash, t.day, substr(t.day, 1, 7) AS month, t.amount_cents
        COALESCE(c.kind, CASE WHEN t.amount_cents < 0 THEN 'expense' ELSE 'income' END) AS kind
 FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
 WHERE t.amount_cents <> 0 AND t.day IS NOT NULL;
+"#, r#"
+-- Argent échangé avec d'autres personnes : ni un virement interne (il sort vraiment du budget), ni un remboursement.
+INSERT OR IGNORE INTO categories (name, icon, kind, description, position) VALUES
+    ('Envois à des proches', 'lucide:send', 'expense',
+     'argent envoyé à une autre personne (ami, famille, colocataire) par virement, Lydia, Wero, PayPal à un particulier', 31),
+    ('Reçu de proches', 'lucide:hand-heart', 'income',
+     'argent reçu d''une autre personne (ami, famille) par virement, Lydia, Wero, PayPal, hors remboursement explicite', 32);
+
+-- Descriptions précisées, seulement si elles n'ont pas été modifiées.
+UPDATE categories SET description = 'UNIQUEMENT entre mes propres comptes (même titulaire) : virements à mon nom, rechargements, conversions de devises. Jamais un virement avec une autre personne.'
+ WHERE role = 'internal' AND description = 'virements entre mes propres comptes, rechargements de compte, conversions de devises';
+UPDATE categories SET description = 'versements vers ou depuis un livret, une épargne, un coffre, un compte d''investissement, un robo-advisor (portfolio), des actions ou des cryptomonnaies'
+ WHERE role = 'savings' AND description = 'versements vers ou depuis un livret, une épargne, un coffre ou un compte d''investissement';
+UPDATE categories SET description = 'streaming, logiciels, cloud, IA, applications, jeux en ligne, presse en ligne (Netflix, Spotify, Deezer, Apple, Google, GitHub, Anthropic, OpenAI, Midjourney, Proton)'
+ WHERE name = 'Abonnements & services en ligne' AND description = 'streaming, logiciels, cloud, IA, applications, presse en ligne (Netflix, Spotify, Deezer, Apple, Google, GitHub, Anthropic, OpenAI)';
+UPDATE categories SET description = 'remboursements d''achats, de frais bancaires, de santé (CPAM, mutuelle, assurance), d''une caution'
+ WHERE name = 'Remboursements' AND description = 'remboursements d''achats, de frais bancaires, de santé (CPAM, mutuelle, assurance), d''un proche qui rembourse sa part';
+UPDATE categories SET description = 'dépenses qui ne rentrent dans aucune autre catégorie (frais postaux, services divers)'
+ WHERE name = 'Autres dépenses' AND description = 'dépenses qui ne rentrent dans aucune autre catégorie';
 "#];
 
 /// Catégories proposées au départ (toutes modifiables). Les descriptions guident l'IA.

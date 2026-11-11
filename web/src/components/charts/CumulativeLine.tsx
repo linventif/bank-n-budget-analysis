@@ -12,12 +12,23 @@ export function CumulativeLine(props: { current: number[]; average: number[]; da
   const H = 230;
   const pad = { top: 16, right: 88, bottom: 26, left: 52 };
 
-  const ticks = createMemo(() => niceTicks(Math.max(0, ...props.current, ...props.average)));
+  const ticks = createMemo(() => {
+    const vals = [...props.current, ...props.average];
+    const lo = Math.min(0, ...vals);
+    const hi = Math.max(0, ...vals);
+    if (lo >= 0) return niceTicks(hi);
+    const span = niceTicks(hi - lo);
+    const step = span[1] - span[0] || 1;
+    const out: number[] = [];
+    for (let v = Math.floor(lo / step) * step; v < hi + step; v += step) out.push(v);
+    return out;
+  });
+  const yMin = () => ticks()[0];
   const yMax = () => ticks()[ticks().length - 1] || 1;
   const plotW = () => Math.max(width() - pad.left - pad.right, 50);
   const plotH = H - pad.top - pad.bottom;
   const x = (d: number) => pad.left + (props.days <= 1 ? 0 : (d / (props.days - 1)) * plotW());
-  const y = (v: number) => pad.top + plotH - (v / yMax()) * plotH;
+  const y = (v: number) => pad.top + plotH - ((v - yMin()) / (yMax() - yMin() || 1)) * plotH;
   const path = (vals: number[]) => vals.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
 
   const xTicks = () => [1, 8, 15, 22, props.days].filter((d, i, a) => d <= props.days && a.indexOf(d) === i);

@@ -155,7 +155,7 @@ function AiPanel() {
           <Ico icon="lucide:sparkles" /> Classification par IA locale
         </span>
       }
-      subtitle="Un petit modèle tourne sur ta machine via Ollama : aucun libellé ne quitte l'ordinateur"
+      subtitle={`Un petit modèle tourne sur ta machine (${health()?.provider === "ollama" ? "Ollama" : "vLLM"}) : aucun libellé ne quitte l'ordinateur`}
     >
       <div class="flex flex-col gap-4">
         <div class="flex items-center gap-3 text-sm">
@@ -163,9 +163,13 @@ function AiPanel() {
             class={`inline-flex size-2.5 rounded-full ${health()?.model_installed ? "bg-success" : health()?.reachable ? "bg-warning" : "bg-error"}`}
           />
           <span>
-            <Show when={health()?.reachable} fallback="Ollama ne répond pas sur 127.0.0.1:11434">
-              <Show when={health()?.model_installed} fallback={`Ollama actif · modèle ${health()?.model} non installé`}>
-                Prêt · modèle <span class="font-medium">{health()?.model}</span>
+            <Show when={health()?.reachable} fallback={`Le serveur IA ne répond pas (${health()?.url ?? "?"})`}>
+              <Show
+                when={health()?.model_installed}
+                fallback={`Serveur actif, mais il sert ${health()?.models.join(", ") || "aucun modèle"} au lieu de ${health()?.model}`}
+              >
+                Prêt · <span class="font-medium">{health()?.model}</span>
+                <span class="text-muted"> via {health()?.provider === "ollama" ? "Ollama" : "vLLM"}</span>
               </Show>
             </Show>
           </span>
@@ -174,16 +178,27 @@ function AiPanel() {
         <Show when={!health()?.model_installed}>
           <div class="bg-base-200 rounded-box p-4 text-sm">
             <p class="mb-2 font-medium">Pour l'activer :</p>
-            <ol class="text-ink-2 list-decimal space-y-1 pl-5">
-              <Show when={!health()?.reachable}>
-                <li>
-                  Installer Ollama : <code class="text-xs">curl -fsSL https://ollama.com/install.sh | sh</code>
-                </li>
-              </Show>
-              <li>
-                Télécharger le modèle : <code class="text-xs">ollama pull {health()?.model ?? "gemma3:4b"}</code>
-              </li>
-            </ol>
+            <Show
+              when={health()?.provider !== "ollama"}
+              fallback={
+                <ol class="text-ink-2 list-decimal space-y-1 pl-5">
+                  <li>
+                    Installer Ollama : <code class="text-xs">curl -fsSL https://ollama.com/install.sh | sh</code>
+                  </li>
+                  <li>
+                    Télécharger le modèle : <code class="text-xs">ollama pull {health()?.model}</code>
+                  </li>
+                </ol>
+              }
+            >
+              <p class="text-ink-2">
+                Démarre vLLM : <code class="text-xs">./scripts/vllm.sh start</code>
+              </p>
+              <p class="text-muted mt-1 text-xs">
+                Chargement du modèle : 2 à 4 minutes (plus le téléchargement au premier lancement). Suivi :{" "}
+                <code>./scripts/vllm.sh logs</code> · arrêt pour libérer la RAM : <code>./scripts/vllm.sh stop</code>
+              </p>
+            </Show>
           </div>
         </Show>
 

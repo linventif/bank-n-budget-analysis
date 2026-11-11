@@ -19,9 +19,11 @@ public_url = "https://bks.example.com"
 # countries    = ["FR"]   # pays dont les banques sont proposées
 # consent_days = 180
 
-# Classification des dépenses par un modèle local (Ollama). Valeurs par défaut :
+# Classification des dépenses par un modèle local. Valeurs par défaut :
 # [ai]
-# enabled    = true
-# url        = "http://127.0.0.1:11434"
-# model      = "gemma3:4b"      # alternative : "qwen3:4b"
-# batch_size = 15               # marchands par requête
+# enabled     = true
+# provider    = "vllm"                       # API compatible OpenAI ; ou "ollama"
+# url         = "http://127.0.0.1:8000/v1"   # Ollama : "http://127.0.0.1:11434"
+# model       = "Qwen/Qwen3-4B-AWQ"
+# batch_size  = 12                           # marchands par requête
+# concurrency = 2                            # requêtes simultanées
