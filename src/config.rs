@@ -37,8 +37,10 @@ pub struct EnableBanking {
     /// Identifiant de l'application (= nom du fichier .pem téléchargé).
     pub app_id: String,
     pub private_key: PathBuf,
-    #[serde(default = "default_country")]
-    pub country: String,
+    /// Pays dont les banques sont proposées. Une banque doit être autorisée via le même
+    /// pays que celui choisi au moment du « linking » (ex. Revolut est lié via FI).
+    #[serde(default = "default_countries")]
+    pub countries: Vec<String>,
     /// Durée de consentement demandée (plafonnée par la banque, souvent 180 j).
     #[serde(default = "default_consent_days")]
     pub consent_days: i64,
@@ -53,8 +55,8 @@ fn default_local_addr() -> SocketAddr {
 fn default_database() -> PathBuf {
     "data/bank.db".into()
 }
-fn default_country() -> String {
-    "FR".into()
+fn default_countries() -> Vec<String> {
+    vec!["FR".into()]
 }
 fn default_consent_days() -> i64 {
     180
@@ -81,7 +83,13 @@ impl Config {
         cfg.server.database = expand_home(&cfg.server.database);
         if let Some(eb) = cfg.enable_banking.as_mut() {
             eb.private_key = expand_home(&eb.private_key);
-            eb.country = eb.country.to_uppercase();
+            for c in eb.countries.iter_mut() {
+                *c = c.trim().to_uppercase();
+            }
+            eb.countries.dedup();
+            if eb.countries.is_empty() {
+                bail!("enable_banking.countries ne peut pas être vide");
+            }
         }
         Ok(cfg)
     }

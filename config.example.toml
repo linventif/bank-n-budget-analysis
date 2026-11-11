@@ -15,5 +15,5 @@ public_url = "https://bks.example.com"
 # [enable_banking]
 # app_id       = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"    # = nom du fichier .pem
 # private_key  = "~/.config/bank-analysis/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.pem"
-# country      = "FR"
+# countries    = ["FR"]   # pays dont les banques sont proposées
 # consent_days = 180

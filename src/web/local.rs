@@ -57,8 +57,12 @@ async fn aspsps(app: &AppState) -> anyhow::Result<Vec<eb::Aspsp>> {
             return Ok(list.clone());
         }
     }
-    let mut list = client.aspsps(&cfg.country).await?;
-    list.sort_by_key(|a| a.name.to_lowercase());
+    let mut list = Vec::new();
+    for country in &cfg.countries {
+        let mut part = client.aspsps(country).await?;
+        part.sort_by_key(|a| a.name.to_lowercase());
+        list.extend(part);
+    }
     *cache = Some((Instant::now(), list.clone()));
     Ok(list)
 }
@@ -126,9 +130,25 @@ async fn dashboard(State(app): State<Arc<AppState>>) -> HandlerResult<Html<Strin
         Ok(list) => {
             b += "<form class=\"inline\" method=\"post\" action=\"/connect\"><select name=\"aspsp\" required>\
                   <option value=\"\">Choisir…</option>";
+            let mut current_country: Option<&str> = None;
             for a in &list {
+                if current_country != Some(a.country.as_str()) {
+                    if current_country.is_some() {
+                        b += "</optgroup>";
+                    }
+                    b += &format!("<optgroup label=\"{}\">", esc(&a.country));
+                    current_country = Some(&a.country);
+                }
                 let beta = if a.beta { " (bêta)" } else { "" };
-                b += &format!("<option value=\"{0}\">{0}{beta}</option>", esc(&a.name));
+                b += &format!(
+                    "<option value=\"{}\">{} ({}){beta}</option>",
+                    esc(&format!("{}|{}", a.name, a.country)),
+                    esc(&a.name),
+                    esc(&a.country)
+                );
+            }
+            if current_country.is_some() {
+                b += "</optgroup>";
             }
             b += "</select><button>Autoriser l'accès</button></form>\
                   <p class=\"muted\">Tu seras redirigé vers ta banque, puis vers le tunnel public (/callback).</p>";
@@ -171,11 +191,12 @@ async fn connect(State(app): State<Arc<AppState>>, Form(f): Form<ConnectForm>) -
     let (Some(client), Some(cfg)) = (app.eb.as_ref(), app.cfg.enable_banking.as_ref()) else {
         return Err(AppError::from(anyhow!("Enable Banking n'est pas configuré")));
     };
+    let (name, country) = f.aspsp.rsplit_once('|').ok_or_else(|| anyhow!("choix de banque invalide"))?;
     let list = aspsps(&app).await?;
     let aspsp = list
         .iter()
-        .find(|a| a.name == f.aspsp)
-        .ok_or_else(|| anyhow!("banque inconnue : {}", f.aspsp))?;
+        .find(|a| a.name == name && a.country == country)
+        .ok_or_else(|| anyhow!("banque inconnue : {name} ({country})"))?;
 
     // Durée demandée, plafonnée par la banque (avec une marge d'une minute).
     let wanted = cfg.consent_days * 86_400;
