@@ -1,0 +1,2 @@
+# Sécurité chaîne d'approvisionnement : ignorer les versions publiées il y a moins de 14 jours.
+minimumReleaseAge: 20160

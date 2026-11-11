@@ -1,0 +1,142 @@
+@import "tailwindcss";
+
+@plugin "daisyui" {
+  themes: false;
+  logs: false;
+}
+
+/* Surfaces et couleurs alignées sur la palette validée (voir validate_palette.js). */
+@plugin "daisyui/theme" {
+  name: "bks";
+  default: true;
+  prefersdark: false;
+  color-scheme: light;
+  --color-base-100: #fcfcfb;
+  --color-base-200: #f3f3f0;
+  --color-base-300: #e4e3dd;
+  --color-base-content: #1c1c1a;
+  --color-primary: #2a78d6;
+  --color-primary-content: #ffffff;
+  --color-secondary: #6250d6;
+  --color-secondary-content: #ffffff;
+  --color-accent: #1baf7a;
+  --color-accent-content: #0b0b0b;
+  --color-neutral: #2b2b29;
+  --color-neutral-content: #f0efec;
+  --color-info: #2a78d6;
+  --color-info-content: #ffffff;
+  --color-success: #0ca30c;
+  --color-success-content: #ffffff;
+  --color-warning: #fab219;
+  --color-warning-content: #0b0b0b;
+  --color-error: #d03b3b;
+  --color-error-content: #ffffff;
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.875rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+@plugin "daisyui/theme" {
+  name: "bks-dark";
+  default: false;
+  prefersdark: true;
+  color-scheme: dark;
+  --color-base-100: #1a1a19;
+  --color-base-200: #111110;
+  --color-base-300: #2c2c2a;
+  --color-base-content: #f0efec;
+  --color-primary: #3987e5;
+  --color-primary-content: #ffffff;
+  --color-secondary: #9085e9;
+  --color-secondary-content: #0b0b0b;
+  --color-accent: #199e70;
+  --color-accent-content: #ffffff;
+  --color-neutral: #2c2c2a;
+  --color-neutral-content: #f0efec;
+  --color-info: #3987e5;
+  --color-info-content: #ffffff;
+  --color-success: #0ca30c;
+  --color-success-content: #ffffff;
+  --color-warning: #fab219;
+  --color-warning-content: #0b0b0b;
+  --color-error: #d03b3b;
+  --color-error-content: #ffffff;
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.875rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+/* Jetons des graphiques (rôles, pas de hex dans les composants). */
+@layer base {
+  :root,
+  [data-theme="bks"] {
+    --series-1: #2a78d6; /* Dépenses */
+    --series-2: #eb6834; /* Revenus */
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --ink-muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --success-ink: #006300;
+    --hairline: rgba(11, 11, 11, 0.1);
+  }
+  [data-theme="bks-dark"] {
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --ink-muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --success-ink: #0ca30c;
+    --hairline: rgba(255, 255, 255, 0.1);
+  }
+
+  html {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    @apply bg-base-200 text-base-content;
+  }
+}
+
+@layer components {
+  .card-surface {
+    @apply bg-base-100 rounded-box border border-[var(--hairline)];
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+  .text-ink-2 {
+    color: var(--ink-2);
+  }
+  .text-muted {
+    color: var(--ink-muted);
+  }
+  .text-gain {
+    color: var(--success-ink);
+  }
+  .refetching {
+    opacity: 0.55;
+    transition: opacity 150ms ease;
+  }
+}
+
+iconify-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.125em;
+  flex-shrink: 0;
+}
