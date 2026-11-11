@@ -75,12 +75,101 @@ export interface RecurringItem {
   name: string;
   label: string;
   category_id: number | null;
+  kind: "expense" | "income";
+  cadence: "weekly" | "monthly" | "quarterly" | "yearly";
+  /** Montant stable : abonnement / prélèvement. */
+  fixed: boolean;
   amount_cents: number;
   average_cents: number;
+  monthly_cents: number;
   occurrences: number;
+  first_day: string;
   last_day: string;
   next_day: string | null;
   interval_days: number;
+  status: "active" | "late" | "stopped";
+}
+
+export interface RecurringResponse {
+  items: RecurringItem[];
+  subscriptions_monthly_cents: number;
+  recurring_expenses_monthly_cents: number;
+  recurring_income_monthly_cents: number;
+  monthly_total_cents: number;
+}
+
+export type LineKind = "expense" | "income" | "salary" | "info";
+
+export interface BudgetPeriod {
+  id: number;
+  name: string;
+  months: number;
+  start_month: string | null;
+  position: number;
+}
+
+export interface BudgetLine {
+  id: number;
+  section: string;
+  name: string;
+  kind: LineKind;
+  category_id: number | null;
+  match: string | null;
+  once_cents: number | null;
+  position: number;
+  /** id de période → centimes */
+  amounts: Record<string, number>;
+}
+
+export interface Budget {
+  id: number;
+  name: string;
+  notes: string;
+  is_active: boolean;
+  created_at: string;
+  periods: BudgetPeriod[];
+  lines: BudgetLine[];
+}
+
+export interface LineTrack {
+  line_id: number;
+  planned_cents: number | null;
+  actual_cents: number | null;
+  detected_cents: number | null;
+  count: number;
+  last_day: string | null;
+}
+
+export interface CatTrack {
+  category_id: number | null;
+  actual_cents: number;
+  detected_cents: number;
+  count: number;
+}
+
+export interface Tracking {
+  month: string;
+  months: string[];
+  is_current_month: boolean;
+  period: BudgetPeriod | null;
+  period_auto: boolean;
+  lines: LineTrack[];
+  unbudgeted: CatTrack[];
+  unbudgeted_income: CatTrack[];
+  actual_expense_cents: number;
+  actual_income_cents: number;
+  suggestions: RecurringItem[];
+}
+
+export interface LineInput {
+  section?: string;
+  name?: string;
+  kind?: LineKind;
+  category_id?: number | null;
+  match?: string | null;
+  once_cents?: number | null;
+  position?: number;
+  amounts?: Record<string, number | null>;
 }
 
 export interface Tx {
@@ -186,7 +275,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   return data as T;
 }
 
-const qs = (params: Record<string, string | number | undefined | null | false>) => {
+const qs = (params: Record<string, string | number | boolean | undefined | null>) => {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== "" && v !== false) p.set(k, String(v));
   const s = p.toString();
@@ -200,6 +289,7 @@ export interface TxFilters {
   q?: string;
   kind?: string;
   source?: string;
+  hide_transfers?: boolean;
 }
 
 export const api = {
@@ -207,7 +297,7 @@ export const api = {
   accounts: () => call<Account[]>("GET", "/accounts"),
   summary: (month?: string) => call<Summary>("GET", `/summary${qs({ month })}`),
   trends: (months = 12) => call<Trends>("GET", `/trends${qs({ months })}`),
-  recurring: () => call<{ items: RecurringItem[]; monthly_total_cents: number }>("GET", "/recurring"),
+  recurring: () => call<RecurringResponse>("GET", "/recurring"),
   transactions: (f: TxFilters, limit = 100, offset = 0) =>
     call<TxPage>("GET", `/transactions${qs({ ...f, limit, offset })}`),
   setCategory: (id: number, category_id: number | null) =>
@@ -223,6 +313,21 @@ export const api = {
   sync: () => call<{ started: boolean }>("POST", "/sync", {}),
   cancelClassify: () => call<{ cancelling: boolean }>("POST", "/classify/cancel", {}),
   classify: (reclassify = false) => call<{ stats: CatStats; ai_started: boolean }>("POST", "/classify", { reclassify }),
+  budgets: () => call<Budget[]>("GET", "/budgets"),
+  budget: (id: number) => call<Budget>("GET", `/budgets/${id}`),
+  createBudget: (b: { name: string; mode: "empty" | "detected" | "copy"; source_id?: number; periods?: { name: string; months: number }[] }) =>
+    call<{ id: number }>("POST", "/budgets", b),
+  updateBudget: (id: number, b: { name?: string; notes?: string; is_active?: boolean }) => call<{ ok: true }>("PATCH", `/budgets/${id}`, b),
+  deleteBudget: (id: number) => call<{ ok: true }>("DELETE", `/budgets/${id}`),
+  tracking: (id: number, month?: string, period?: number) => call<Tracking>("GET", `/budgets/${id}/tracking${qs({ month, period })}`),
+  addPeriod: (budgetId: number, p: { name: string; months: number; start_month?: string | null }) =>
+    call<{ id: number }>("POST", `/budgets/${budgetId}/periods`, p),
+  updatePeriod: (id: number, p: { name?: string; months?: number; start_month?: string | null }) =>
+    call<{ ok: true }>("PATCH", `/budget-periods/${id}`, p),
+  deletePeriod: (id: number) => call<{ ok: true }>("DELETE", `/budget-periods/${id}`),
+  addLine: (budgetId: number, l: LineInput & { name: string; kind: LineKind }) => call<{ id: number }>("POST", `/budgets/${budgetId}/lines`, l),
+  updateLine: (id: number, l: LineInput) => call<{ ok: true }>("PATCH", `/budget-lines/${id}`, l),
+  deleteLine: (id: number) => call<{ ok: true }>("DELETE", `/budget-lines/${id}`),
   banks: () => call<Bank[]>("GET", "/banks"),
   connect: (name: string, country: string) => call<{ url: string }>("POST", "/connect", { name, country }),
 };

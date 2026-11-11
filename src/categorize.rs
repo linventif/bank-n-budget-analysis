@@ -39,7 +39,7 @@ pub struct Stats {
 const OPEN: &str = "(category_source IS NULL OR category_source = 'ai')";
 
 static SAVINGS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^(to|from|vers|depuis)\s+.*(savings|investment|invest|vault|coffre|épargne|epargne|pocket|livret|portfolio|robo|crypto|bourse|stocks)").unwrap()
+    Regex::new(r"(?i)\b(to|from|vers|depuis)\s+.*(savings|investment|invest|vault|coffre|épargne|epargne|pocket|livret|portfolio|robo|crypto|bourse|stocks)").unwrap()
 });
 /// Poches et changes de devises Revolut : « To EUR », « Exchanged to EUR ».
 static POCKET: LazyLock<Regex> = LazyLock::new(|| {

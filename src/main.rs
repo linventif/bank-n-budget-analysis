@@ -1,4 +1,5 @@
 mod ai;
+mod budget;
 mod categorize;
 mod config;
 mod db;
@@ -39,6 +40,13 @@ async fn main() -> Result<()> {
     let n = categorize::backfill_merchants(&conn)?;
     let stats = categorize::apply_deterministic(&mut conn)?;
     tracing::info!(merchants_backfilled = n, ?stats, "catégorisation au démarrage");
+    if let Some(dir) = cfg.server.database.parent() {
+        match budget::import_seed(&mut conn, dir) {
+            Ok(Some(name)) => tracing::info!("budget « {name} » importé depuis budget-seed.json"),
+            Ok(None) => {}
+            Err(e) => tracing::warn!("budget-seed.json non importé : {e:#}"),
+        }
+    }
 
     let eb = match &cfg.enable_banking {
         Some(e) => {

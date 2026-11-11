@@ -117,6 +117,41 @@ UPDATE categories SET description = 'remboursements d''achats, de frais bancaire
  WHERE name = 'Remboursements' AND description = 'remboursements d''achats, de frais bancaires, de santé (CPAM, mutuelle, assurance), d''un proche qui rembourse sa part';
 UPDATE categories SET description = 'dépenses qui ne rentrent dans aucune autre catégorie (frais postaux, services divers)'
  WHERE name = 'Autres dépenses' AND description = 'dépenses qui ne rentrent dans aucune autre catégorie';
+"#, r#"
+-- Budgets prévisionnels, structurés comme un tableur : postes (lignes) × périodes (colonnes).
+CREATE TABLE budgets (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL,
+    notes      TEXT NOT NULL DEFAULT '',
+    is_active  INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE budget_periods (
+    id          INTEGER PRIMARY KEY,
+    budget_id   INTEGER NOT NULL REFERENCES budgets(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    months      INTEGER NOT NULL DEFAULT 1 CHECK (months BETWEEN 1 AND 24),
+    start_month TEXT,                -- 'AAAA-MM' : période appliquée automatiquement à partir de ce mois
+    position    INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE budget_lines (
+    id          INTEGER PRIMARY KEY,
+    budget_id   INTEGER NOT NULL REFERENCES budgets(id) ON DELETE CASCADE,
+    section     TEXT NOT NULL DEFAULT '',
+    name        TEXT NOT NULL,
+    kind        TEXT NOT NULL CHECK (kind IN ('expense', 'income', 'salary', 'info')),
+    category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+    match       TEXT,                -- « le libellé contient » : rattache les opérations au poste
+    once_cents  INTEGER,             -- montant annuel / ponctuel
+    position    INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE budget_amounts (
+    line_id      INTEGER NOT NULL REFERENCES budget_lines(id) ON DELETE CASCADE,
+    period_id    INTEGER NOT NULL REFERENCES budget_periods(id) ON DELETE CASCADE,
+    amount_cents INTEGER NOT NULL,
+    PRIMARY KEY (line_id, period_id)
+);
+CREATE INDEX budget_lines_budget ON budget_lines (budget_id, position);
 "#];
 
 /// Catégories proposées au départ (toutes modifiables). Les descriptions guident l'IA.

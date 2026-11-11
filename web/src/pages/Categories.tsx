@@ -70,7 +70,6 @@ function CategoryRow(props: { c: Category; onSave: (p: Partial<Category>) => voi
       store.toast(errorText(e), "error");
     }
   };
-  const budgetEuros = () => (c().budget_cents != null ? String(c().budget_cents! / 100) : "");
 
   return (
     <li class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 px-4 py-3 sm:px-5">
@@ -107,27 +106,6 @@ function CategoryRow(props: { c: Category; onSave: (p: Partial<Category>) => voi
         />
       </div>
       <div class="flex items-center gap-1">
-        <Show when={c().kind === "expense"}>
-          <label class="input input-sm w-32" title="Budget mensuel">
-            <Ico icon="lucide:target" class="text-muted" />
-            <input
-              type="number"
-              min="0"
-              step="10"
-              inputmode="decimal"
-              placeholder="Budget"
-              value={budgetEuros()}
-              class="num"
-              aria-label="Budget mensuel en euros"
-              onChange={(e) => {
-                const raw = e.currentTarget.value.trim().replace(",", ".");
-                const v = raw === "" ? null : Math.round(Number(raw) * 100);
-                if (v === null || (Number.isFinite(v) && v >= 0)) props.onSave({ budget_cents: v && v > 0 ? v : null });
-              }}
-            />
-            <span class="text-muted text-xs">€</span>
-          </label>
-        </Show>
         <Show
           when={confirm()}
           fallback={<IconButton icon="lucide:trash-2" label={`Supprimer ${c().name}`} class="text-muted" onClick={() => setConfirm(true)} />}

@@ -68,6 +68,23 @@ Par ordre de priorité (une étape ne touche jamais ce qu'une étape plus priori
 Les descriptions des catégories sont envoyées au modèle : les enrichir (enseignes, exemples)
 améliore le classement.
 
+## Budget
+
+Onglet **Budget**, structuré comme un tableur : postes (lignes, groupés par section) × périodes
+(colonnes, ex. « Toulouse » × 5 mois puis « Lille » × 4 mois), plus une colonne annuel / ponctuel.
+Types de poste : dépense, aide / revenu (réduit le reste à charge), salaire, info (hors totaux).
+
+- **Plan** : édition directe des montants ; totaux « dépenses − aides = reste à charge » et
+  « salaire − reste à charge = disponible », par période et sur toute la durée.
+- **Suivi** (budget dynamique) : pour un mois, prévu / réel / détecté (moyenne des 3 mois
+  précédents) par poste. Un poste se rattache aux opérations par motif de libellé (prioritaire)
+  ou par catégorie, dans le bon sens (dépense = débit). Hors budget et récurrents non budgétés
+  peuvent être ajoutés en un clic ; « viser » aligne l'objectif sur le détecté.
+- **Récurrents** : abonnements (montant fixe), dépenses et revenus réguliers ; cadence
+  hebdomadaire, mensuelle, trimestrielle ou annuelle ; en retard / arrêtés.
+- Création : vierge, depuis les dépenses détectées, ou copie. Le budget actif alimente le tableau de bord.
+- Un `data/budget-seed.json` (hors dépôt) est importé une fois au démarrage, puis renommé.
+
 ## Analyses
 
 Tableau de bord mensuel (dépenses vs moyenne à date, solde, taux d'épargne, rythme cumulé,

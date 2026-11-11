@@ -1,6 +1,6 @@
 import { A, useNavigate, useSearchParams } from "@solidjs/router";
 import { createMemo, createResource, For, Show } from "solid-js";
-import { api, type CatAmount, type Summary } from "../api";
+import { api, type Budget, type CatAmount, type Summary, type Tracking } from "../api";
 import { BarList } from "../components/charts/BarList";
 import { CumulativeLine } from "../components/charts/CumulativeLine";
 import { MonthlyColumns } from "../components/charts/MonthlyColumns";
@@ -17,6 +17,13 @@ export default function Dashboard() {
     ({ month }) => api.summary(month),
   );
   const [recurring] = createResource(store.version, () => api.recurring());
+  const recurringExpenses = () => (recurring.latest?.items ?? []).filter((r) => r.kind === "expense" && r.status !== "stopped");
+  // Budget actif : suivi du mois affiché.
+  const [activeBudget] = createResource(store.version, async () => (await api.budgets()).find((b) => b.is_active) ?? null);
+  const [budgetTrack] = createResource(
+    () => (activeBudget.latest && month() ? { id: activeBudget.latest.id, month: month()!, v: store.version() } : false),
+    ({ id, month }) => api.tracking(id, month),
+  );
 
   const s = () => summary.latest;
   const month = () => s()?.month ?? null;
@@ -96,7 +103,7 @@ export default function Dashboard() {
                   monthLabel={monthLong(month()!)}
                 />
               </Card>
-              <Budgets class="lg:col-span-2" rows={s()!.by_category} isCurrent={s()!.is_current_month} />
+              <Budgets class="lg:col-span-2" budget={activeBudget.latest ?? null} tracking={budgetTrack.latest ?? null} />
             </div>
 
             <div class="grid gap-5 lg:grid-cols-5">
@@ -142,23 +149,26 @@ export default function Dashboard() {
 
             <Card
               title="Paiements récurrents"
-              subtitle="Abonnements et prélèvements détectés automatiquement"
+              subtitle="Abonnements et dépenses régulières détectés automatiquement"
               actions={
-                <Show when={recurring.latest?.items.length}>
+                <Show when={recurringExpenses().length}>
                   <span class="text-muted text-sm">
                     <span class="num text-base-content font-semibold">{money(recurring.latest!.monthly_total_cents)}</span> / mois
                   </span>
+                  <A href="/budget?tab=recurrents" class="btn btn-ghost btn-xs">
+                    Tout voir <Ico icon="lucide:arrow-right" />
+                  </A>
                 </Show>
               }
             >
               <Show
-                when={recurring.latest?.items.length}
+                when={recurringExpenses().length}
                 fallback={<Empty icon="lucide:repeat" title="Aucun paiement récurrent détecté">Il faut au moins 3 mois d'historique.</Empty>}
               >
                 <ul class="grid gap-x-6 gap-y-1 sm:grid-cols-2">
-                  <For each={recurring.latest!.items}>
+                  <For each={recurringExpenses().slice(0, 10)}>
                     {(r) => {
-                      const late = () => r.next_day != null && r.next_day < new Date().toISOString().slice(0, 10);
+                      const late = () => r.status === "late";
                       return (
                         <li class="flex items-center gap-3 py-1.5">
                           <CategoryIcon category={r.category_id != null ? store.categoryById().get(r.category_id) : null} size="sm" />
@@ -331,38 +341,56 @@ function CategoryBars(props: { rows: CatAmount[]; total: number; onOpen: (id: nu
   return <BarList rows={rows()} total={props.total} referenceLabel="moy." />;
 }
 
-function Budgets(props: { rows: CatAmount[]; isCurrent: boolean; class?: string }) {
-  const budgeted = () => props.rows.filter((r) => r.budget_cents != null && r.category_id != null);
-  const dayRatio = () => {
-    const d = new Date();
-    return d.getDate() / new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-  };
+function Budgets(props: { budget: Budget | null; tracking: Tracking | null; class?: string }) {
+  const rows = createMemo(() => {
+    const b = props.budget;
+    const t = props.tracking;
+    if (!b || !t) return [];
+    const byLine = new Map(t.lines.map((x) => [x.line_id, x]));
+    return b.lines
+      .filter((l) => l.kind === "expense")
+      .map((l) => ({ line: l, track: byLine.get(l.id) }))
+      .filter((r) => (r.track?.planned_cents ?? 0) > 0 && r.track?.actual_cents != null)
+      .sort((a, b) => b.track!.planned_cents! - a.track!.planned_cents!)
+      .slice(0, 7);
+  });
   return (
-    <Card class={props.class} title="Budgets" subtitle={props.isCurrent ? "Consommé à ce jour" : "Consommé sur le mois"}>
+    <Card
+      class={props.class}
+      title={props.budget ? `Budget · ${props.tracking?.period?.name ?? props.budget.name}` : "Budget"}
+      subtitle={props.tracking?.is_current_month ? "Réel à ce jour / prévu" : "Réel / prévu sur le mois"}
+      actions={
+        <Show when={props.budget}>
+          <A href={`/budget${props.tracking ? `?month=${props.tracking.month}` : ""}`} class="btn btn-ghost btn-xs">
+            Détail <Ico icon="lucide:arrow-right" />
+          </A>
+        </Show>
+      }
+    >
       <Show
-        when={budgeted().length}
+        when={props.budget}
         fallback={
-          <Empty icon="lucide:target" title="Aucun budget défini">
-            Fixe un plafond mensuel par catégorie dans <A href="/categories" class="link">Catégories</A>.
+          <Empty icon="lucide:calculator" title="Pas encore de budget">
+            Prévois tes postes de dépense dans <A href="/budget" class="link">Budget</A>.
           </Empty>
         }
       >
         <ul class="flex flex-col gap-3.5">
-          <For each={budgeted()}>
+          <For each={rows()}>
             {(r) => {
-              const cat = () => store.categoryById().get(r.category_id!);
-              const ratio = () => r.amount_cents / r.budget_cents!;
-              // Sévérité : dépassé > en avance sur le rythme du mois > dans les clous.
-              const level = () => (ratio() > 1 ? "over" : props.isCurrent && ratio() > dayRatio() + 0.15 && ratio() > 0.75 ? "ahead" : "ok");
-              const fill = () => ({ over: "var(--color-error)", ahead: "var(--color-warning)", ok: "var(--series-1)" })[level()];
+              const planned = () => r.track!.planned_cents!;
+              const actual = () => r.track!.actual_cents!;
+              const ratio = () => actual() / planned();
+              const level = () => (ratio() > 1.1 ? "over" : props.tracking?.is_current_month && actual() === 0 ? "pending" : "ok");
+              const fill = () => (level() === "over" ? "var(--color-error)" : ratio() > 1 ? "var(--color-warning)" : "var(--series-1)");
               return (
                 <li>
                   <div class="mb-1.5 flex items-center gap-2.5">
-                    <CategoryIcon category={cat()} size="sm" />
-                    <span class="min-w-0 flex-1 truncate text-sm">{cat()?.name}</span>
+                    <CategoryIcon category={r.line.category_id != null ? store.categoryById().get(r.line.category_id) : null} size="sm" />
+                    <span class="min-w-0 flex-1 truncate text-sm">{r.line.name}</span>
                     <span class="num text-sm">
-                      <span class="font-semibold">{money0(r.amount_cents)}</span>
-                      <span class="text-muted"> / {money0(r.budget_cents!)}</span>
+                      <span class="font-semibold">{money0(actual())}</span>
+                      <span class="text-muted"> / {money0(planned())}</span>
                     </span>
                   </div>
                   <div
@@ -370,18 +398,15 @@ function Budgets(props: { rows: CatAmount[]; isCurrent: boolean; class?: string 
                     style={{ background: "color-mix(in oklab, var(--series-1) 16%, var(--color-base-100))" }}
                     role="meter"
                     aria-valuemin={0}
-                    aria-valuemax={r.budget_cents!}
-                    aria-valuenow={r.amount_cents}
-                    aria-label={`${cat()?.name} : ${money0(r.amount_cents)} sur ${money0(r.budget_cents!)}`}
+                    aria-valuemax={planned()}
+                    aria-valuenow={actual()}
+                    aria-label={`${r.line.name} : ${money0(actual())} sur ${money0(planned())}`}
                   >
                     <div class="h-full rounded-full" style={{ width: `${Math.min(ratio(), 1) * 100}%`, background: fill() }} />
                   </div>
-                  <Show when={level() !== "ok"}>
-                    <div class={`mt-1 flex items-center gap-1 text-xs ${level() === "over" ? "text-error" : "text-ink-2"}`}>
-                      <Ico icon={level() === "over" ? "lucide:circle-alert" : "lucide:clock"} />
-                      {level() === "over"
-                        ? `Dépassé de ${money0(r.amount_cents - r.budget_cents!)}`
-                        : `${percent(ratio())} du budget consommé, en avance sur le mois`}
+                  <Show when={level() === "over"}>
+                    <div class="text-error mt-1 flex items-center gap-1 text-xs">
+                      <Ico icon="lucide:circle-alert" /> {money0(actual() - planned())} au-dessus du prévu
                     </div>
                   </Show>
                 </li>

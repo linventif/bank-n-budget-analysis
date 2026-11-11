@@ -25,6 +25,7 @@ export default function Transactions() {
     q: params.q,
     kind: params.kind,
     source: params.source,
+    hide_transfers: store.hideTransfers(),
   });
   createEffect(on(() => JSON.stringify(filters()), () => setPages(1), { defer: true }));
 
@@ -118,6 +119,19 @@ export default function Transactions() {
             )}
           </For>
         </div>
+        <label
+          class="label cursor-pointer gap-2 text-sm"
+          title="Virements entre tes propres comptes et mouvements d'épargne : déjà exclus des totaux, ils encombrent la liste"
+        >
+          <input
+            type="checkbox"
+            class="toggle toggle-sm"
+            checked={store.hideTransfers() || params.kind === "transfer"}
+            disabled={params.kind === "transfer"}
+            onChange={(e) => store.setHideTransfers(e.currentTarget.checked)}
+          />
+          Masquer les virements internes
+        </label>
         <button
           class={`btn btn-sm ${params.source === "review" ? "btn-warning" : ""}`}
           onClick={() => setParams({ source: params.source === "review" ? undefined : "review" })}

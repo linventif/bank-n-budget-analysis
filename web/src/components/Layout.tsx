@@ -8,6 +8,7 @@ import { Ico, Spinner } from "./ui";
 
 const NAV = [
   { href: "/", icon: "lucide:layout-dashboard", label: "Tableau de bord", end: true },
+  { href: "/budget", icon: "lucide:calculator", label: "Budget" },
   { href: "/operations", icon: "lucide:list", label: "Opérations" },
   { href: "/tendances", icon: "lucide:chart-column", label: "Tendances" },
   { href: "/categories", icon: "lucide:tags", label: "Catégories" },

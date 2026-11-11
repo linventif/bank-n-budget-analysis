@@ -1,4 +1,5 @@
 pub mod api;
+pub mod budget_api;
 pub mod html;
 pub mod local;
 pub mod public;

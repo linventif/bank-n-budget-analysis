@@ -36,6 +36,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/classify/cancel", post(cancel_classify))
         .route("/banks", get(banks))
         .route("/connect", post(connect))
+        .merge(super::budget_api::router())
 }
 
 // ---------- Erreurs ----------
@@ -46,10 +47,10 @@ pub struct ApiError {
 }
 
 impl ApiError {
-    fn bad(msg: impl Into<String>) -> Self {
+    pub(crate) fn bad(msg: impl Into<String>) -> Self {
         Self { status: StatusCode::BAD_REQUEST, message: msg.into() }
     }
-    fn not_found(msg: impl Into<String>) -> Self {
+    pub(crate) fn not_found(msg: impl Into<String>) -> Self {
         Self { status: StatusCode::NOT_FOUND, message: msg.into() }
     }
 }
@@ -68,7 +69,7 @@ impl IntoResponse for ApiError {
     }
 }
 
-type ApiResult<T> = Result<Json<T>, ApiError>;
+pub(crate) type ApiResult<T> = Result<Json<T>, ApiError>;
 
 // ---------- Mois ----------
 
@@ -498,83 +499,22 @@ async fn trends(State(app): State<Arc<AppState>>, Query(q): Query<TrendQuery>) -
 
 // ---------- Paiements récurrents ----------
 
-#[derive(Serialize)]
-struct Recurring {
-    merchant: String,
-    name: String,
-    label: String,
-    category_id: Option<i64>,
-    amount_cents: i64,
-    average_cents: i64,
-    occurrences: usize,
-    last_day: String,
-    next_day: Option<String>,
-    interval_days: i64,
-}
-
 async fn recurring(State(app): State<Arc<AppState>>) -> ApiResult<Value> {
-    let conn = app.db.lock().unwrap();
-    let mut by_merchant: HashMap<String, Vec<(chrono::NaiveDate, i64, Option<i64>, String)>> = HashMap::new();
-    let mut stmt = conn.prepare(
-        "SELECT merchant, day, -amount_cents, category_id, label FROM ledger
-         WHERE kind = 'expense' AND amount_cents < 0 AND merchant IS NOT NULL
-           AND day >= date((SELECT MAX(day) FROM ledger), '-400 days')
-         ORDER BY day",
-    )?;
-    let rows = stmt.query_map([], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, Option<i64>>(3)?, r.get::<_, String>(4)?))
-    })?;
-    for row in rows {
-        let (m, day, amount, cat, label) = row?;
-        if let Ok(d) = chrono::NaiveDate::parse_from_str(&day, "%Y-%m-%d") {
-            by_merchant.entry(m).or_default().push((d, amount, cat, label));
-        }
-    }
-    let last_data_day = by_merchant.values().flat_map(|v| v.iter().map(|x| x.0)).max();
-
-    let mut out: Vec<Recurring> = Vec::new();
-    for (m, pays) in by_merchant {
-        if pays.len() < 3 {
-            continue;
-        }
-        let months: std::collections::HashSet<(i32, u32)> = pays.iter().map(|p| (p.0.year(), p.0.month())).collect();
-        if months.len() < 3 || pays.len() as f64 / months.len() as f64 > 1.5 {
-            continue;
-        }
-        let mut gaps: Vec<i64> = pays.windows(2).map(|w| (w[1].0 - w[0].0).num_days()).collect();
-        gaps.sort_unstable();
-        let gap = gaps[gaps.len() / 2];
-        if !(25..=35).contains(&gap) {
-            continue;
-        }
-        let mut amounts: Vec<i64> = pays.iter().map(|p| p.1).collect();
-        amounts.sort_unstable();
-        let median = amounts[amounts.len() / 2];
-        let close = amounts.iter().filter(|a| ((**a - median).abs() as f64) <= median as f64 * 0.2 + 100.0).count();
-        if (close as f64) < pays.len() as f64 * 0.75 {
-            continue;
-        }
-        let last = pays.last().unwrap();
-        // Ignorer ce qui s'est arrêté (plus de 2 périodes sans paiement).
-        if last_data_day.is_some_and(|d| (d - last.0).num_days() > gap * 2 + 5) {
-            continue;
-        }
-        out.push(Recurring {
-            name: merchant::display(&m),
-            merchant: m,
-            label: last.3.clone(),
-            category_id: last.2,
-            amount_cents: last.1,
-            average_cents: pays.iter().map(|p| p.1).sum::<i64>() / pays.len() as i64,
-            occurrences: pays.len(),
-            last_day: last.0.to_string(),
-            next_day: last.0.checked_add_signed(chrono::Duration::days(gap)).map(|d| d.to_string()),
-            interval_days: gap,
-        });
-    }
-    out.sort_by(|a, b| b.amount_cents.cmp(&a.amount_cents));
-    let monthly_total: i64 = out.iter().map(|r| r.amount_cents).sum();
-    Ok(Json(json!({ "items": out, "monthly_total_cents": monthly_total })))
+    let items = crate::budget::detect_recurring(&app.db.lock().unwrap())?;
+    let monthly = |kind: &str, fixed: Option<bool>| -> i64 {
+        items
+            .iter()
+            .filter(|r| r.status != "stopped" && r.kind == kind && fixed.is_none_or(|f| r.fixed == f))
+            .map(|r| r.monthly_cents)
+            .sum()
+    };
+    Ok(Json(json!({
+        "subscriptions_monthly_cents": monthly("expense", Some(true)),
+        "recurring_expenses_monthly_cents": monthly("expense", Some(false)),
+        "recurring_income_monthly_cents": monthly("income", None),
+        "monthly_total_cents": monthly("expense", None),
+        "items": items,
+    })))
 }
 
 // ---------- Opérations ----------
@@ -587,6 +527,8 @@ struct TxQuery {
     q: Option<String>,
     kind: Option<String>,
     source: Option<String>,
+    /// Masque les virements entre mes comptes et l'épargne.
+    hide_transfers: Option<bool>,
     limit: Option<i64>,
     offset: Option<i64>,
 }
@@ -632,6 +574,9 @@ async fn transactions(State(app): State<Arc<AppState>>, Query(q): Query<TxQuery>
     if let Some(k) = q.kind.as_deref().filter(|k| ["expense", "income", "transfer"].contains(k)) {
         wh.push("l.kind = ?".into());
         ps.push(Sql::Text(k.to_string()));
+    }
+    if q.hide_transfers == Some(true) && q.kind.as_deref() != Some("transfer") {
+        wh.push("l.kind <> 'transfer'".into());
     }
     match q.source.as_deref() {
         Some("review") => wh.push("l.category_source = 'ai' AND l.category_confidence < 0.6".into()),

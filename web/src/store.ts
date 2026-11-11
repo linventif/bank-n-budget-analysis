@@ -81,10 +81,30 @@ export const store = createRoot(() => {
     apply();
   };
 
+  // Masquer les virements entre mes comptes dans les listes (préférence locale, activée par défaut).
+  const readHide = () => {
+    try {
+      return localStorage.getItem("bks-hide-transfers") !== "0";
+    } catch {
+      return true;
+    }
+  };
+  const [hideTransfers, setHideTransfersSignal] = createSignal(readHide());
+  const setHideTransfers = (v: boolean) => {
+    setHideTransfersSignal(v);
+    try {
+      localStorage.setItem("bks-hide-transfers", v ? "1" : "0");
+    } catch {
+      /* préférence non mémorisée */
+    }
+  };
+
   // Panneau « classification terminée » masqué par l'utilisateur (identifié par sa date de fin).
   const [dismissedRun, setDismissedRun] = createSignal<string | null>(null);
 
   return {
+    hideTransfers,
+    setHideTransfers,
     dismissedRun,
     setDismissedRun,
     version,
