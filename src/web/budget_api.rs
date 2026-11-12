@@ -288,6 +288,7 @@ struct LineInput {
     once_cents: Option<i64>,
     #[serde(default)]
     amounts: HashMap<String, Option<i64>>,
+    scope: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -304,6 +305,14 @@ struct LineUpdate {
     position: Option<i64>,
     #[serde(default)]
     amounts: HashMap<String, Option<i64>>,
+    scope: Option<String>,
+}
+
+fn check_scope(s: Option<&str>) -> Result<(), ApiError> {
+    match s {
+        None | Some("vie") | Some("alternance") => Ok(()),
+        _ => Err(ApiError::bad("périmètre invalide (vie ou alternance)")),
+    }
 }
 
 fn check_kind(k: &str) -> Result<(), ApiError> {
@@ -349,6 +358,7 @@ fn check_category(conn: &Connection, id: Option<i64>) -> Result<(), ApiError> {
 async fn add_line(State(app): State<Arc<AppState>>, Path(id): Path<i64>, Json(l): Json<LineInput>) -> ApiResult<Value> {
     check_name(&l.name)?;
     check_kind(&l.kind)?;
+    check_scope(l.scope.as_deref())?;
     if let Some(c) = l.once_cents {
         check_amount(c)?;
     }
@@ -358,8 +368,8 @@ async fn add_line(State(app): State<Arc<AppState>>, Path(id): Path<i64>, Json(l)
     }
     check_category(&conn, l.category_id)?;
     conn.execute(
-        "INSERT INTO budget_lines (budget_id, section, name, kind, category_id, match, once_cents, position)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, (SELECT COALESCE(MAX(position), -1) + 1 FROM budget_lines WHERE budget_id = ?1))",
+        "INSERT INTO budget_lines (budget_id, section, name, kind, category_id, match, once_cents, position, scope)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, (SELECT COALESCE(MAX(position), -1) + 1 FROM budget_lines WHERE budget_id = ?1), ?8)",
         params![
             id,
             l.section.trim(),
@@ -367,7 +377,8 @@ async fn add_line(State(app): State<Arc<AppState>>, Path(id): Path<i64>, Json(l)
             l.kind,
             l.category_id,
             l.pattern.as_deref().map(str::trim).filter(|p| !p.is_empty()),
-            l.once_cents
+            l.once_cents,
+            l.scope.as_deref().unwrap_or("vie")
         ],
     )?;
     let line_id = conn.last_insert_rowid();
@@ -382,6 +393,7 @@ async fn update_line(State(app): State<Arc<AppState>>, Path(id): Path<i64>, Json
     if let Some(k) = &l.kind {
         check_kind(k)?;
     }
+    check_scope(l.scope.as_deref())?;
     if let Some(Some(c)) = l.once_cents {
         check_amount(c)?;
     }
@@ -395,7 +407,8 @@ async fn update_line(State(app): State<Arc<AppState>>, Path(id): Path<i64>, Json
             category_id = CASE WHEN ?4 THEN ?5 ELSE category_id END,
             match = CASE WHEN ?6 THEN ?7 ELSE match END,
             once_cents = CASE WHEN ?8 THEN ?9 ELSE once_cents END,
-            position = COALESCE(?10, position)
+            position = COALESCE(?10, position),
+            scope = COALESCE(?12, scope)
          WHERE id = ?11",
         params![
             l.section.as_deref().map(str::trim),
@@ -408,7 +421,8 @@ async fn update_line(State(app): State<Arc<AppState>>, Path(id): Path<i64>, Json
             l.once_cents.is_some(),
             l.once_cents.flatten(),
             l.position,
-            id
+            id,
+            l.scope
         ],
     )?;
     write_amounts(&conn, budget, id, &l.amounts)?;

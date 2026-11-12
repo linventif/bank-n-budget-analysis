@@ -6,7 +6,7 @@ import { Card, Empty, Ico, IconButton, SourceBadge, Spinner } from "../component
 import { dayLabel, dayLong, money, monthLong, prettyMerchant, signedMoney } from "../format";
 import { errorText, store } from "../store";
 
-type Params = { month?: string; category?: string; account?: string; q?: string; kind?: string; source?: string };
+type Params = { month?: string; category?: string; account?: string; q?: string; kind?: string; source?: string; excluded?: string };
 
 const KINDS: { v: string; label: string }[] = [
   { v: "", label: "Tout" },
@@ -26,6 +26,7 @@ export default function Transactions() {
     kind: params.kind,
     source: params.source,
     hide_transfers: store.hideTransfers(),
+    excluded: params.excluded,
   });
   createEffect(on(() => JSON.stringify(filters()), () => setPages(1), { defer: true }));
 
@@ -42,6 +43,22 @@ export default function Transactions() {
   const onSearch = (v: string) => {
     window.clearTimeout(debounce);
     debounce = window.setTimeout(() => setParams({ q: v || undefined }), 250);
+  };
+
+  const toggleExcluded = async (t: Tx) => {
+    try {
+      await api.setExcluded(t.id, !t.excluded);
+      store.toast(t.excluded ? "Opération réintégrée dans les statistiques" : "Opération exclue des statistiques et du budget", "success", {
+        label: "Annuler",
+        run: async () => {
+          await api.setExcluded(t.id, t.excluded);
+          store.bump();
+        },
+      });
+      store.bump();
+    } catch (e) {
+      store.toast(errorText(e), "error");
+    }
   };
 
   const assign = async (t: Tx, categoryId: number | null) => {
@@ -78,7 +95,7 @@ export default function Transactions() {
           </p>
         </div>
         <Show when={active()}>
-          <button class="btn btn-ghost btn-sm" onClick={() => setParams({ month: undefined, category: undefined, account: undefined, q: undefined, kind: undefined, source: undefined })}>
+          <button class="btn btn-ghost btn-sm" onClick={() => setParams({ month: undefined, category: undefined, account: undefined, q: undefined, kind: undefined, source: undefined, excluded: undefined })}>
             <Ico icon="lucide:x" /> Effacer les filtres
           </button>
         </Show>
@@ -133,6 +150,14 @@ export default function Transactions() {
           Masquer les virements internes
         </label>
         <button
+          class={`btn btn-sm ${params.excluded === "only" ? "btn-active" : ""}`}
+          onClick={() => setParams({ excluded: params.excluded === "only" ? undefined : "only" })}
+          aria-pressed={params.excluded === "only"}
+          title="Opérations retirées des statistiques"
+        >
+          <Ico icon="lucide:eye-off" /> Exclues
+        </button>
+        <button
           class={`btn btn-sm ${params.source === "review" ? "btn-warning" : ""}`}
           onClick={() => setParams({ source: params.source === "review" ? undefined : "review" })}
           aria-pressed={params.source === "review"}
@@ -164,7 +189,12 @@ export default function Transactions() {
                           {dayLong(t.day)}
                         </li>
                       </Show>
-                      <TxRow tx={t} onAssign={(id) => assign(t, id)} onRule={() => setRule({ pattern: t.merchant ?? t.label, category: t.category_id })} />
+                      <TxRow
+                        tx={t}
+                        onAssign={(id) => assign(t, id)}
+                        onRule={() => setRule({ pattern: t.merchant ?? t.label, category: t.category_id })}
+                        onToggleExcluded={() => toggleExcluded(t)}
+                      />
                     </>
                   );
                 }}
@@ -189,12 +219,12 @@ export default function Transactions() {
   );
 }
 
-function TxRow(props: { tx: Tx; onAssign: (id: number | null) => void; onRule: () => void }) {
+function TxRow(props: { tx: Tx; onAssign: (id: number | null) => void; onRule: () => void; onToggleExcluded: () => void }) {
   const t = () => props.tx;
   const prefer = (): Kind[] => (t().amount_cents < 0 ? ["expense", "transfer", "income"] : ["income", "transfer", "expense"]);
   const title = () => (t().merchant ? prettyMerchant(t().merchant!) : t().label);
   return (
-    <li class="hover:bg-base-200/40 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 px-4 py-2.5 sm:grid-cols-[minmax(0,1fr)_14rem_5.75rem_4rem_7rem] sm:px-5">
+    <li class={`hover:bg-base-200/40 ${t().excluded ? "opacity-55" : ""} grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 px-4 py-2.5 sm:grid-cols-[minmax(0,1fr)_14rem_5.75rem_5.5rem_7rem] sm:px-5`}>
       <div class="min-w-0">
         <div class="flex items-center gap-2">
           <span class="truncate text-sm font-medium" title={t().label}>
@@ -202,6 +232,9 @@ function TxRow(props: { tx: Tx; onAssign: (id: number | null) => void; onRule: (
           </span>
           <Show when={t().status !== "BOOK"}>
             <span class="badge badge-ghost badge-xs">en attente</span>
+          </Show>
+          <Show when={t().excluded}>
+            <span class="badge badge-ghost badge-xs" title="Ignorée par le tableau de bord, les tendances et le budget">exclue</span>
           </Show>
         </div>
         <div class="text-muted flex min-w-0 items-center gap-1.5 text-xs">
@@ -213,7 +246,7 @@ function TxRow(props: { tx: Tx; onAssign: (id: number | null) => void; onRule: (
         </div>
       </div>
       <div
-        class={`num text-right text-sm font-semibold sm:col-start-5 sm:row-start-1 ${t().kind === "income" ? "text-gain" : t().kind === "transfer" ? "text-muted" : ""}`}
+        class={`num text-right text-sm font-semibold sm:col-start-5 sm:row-start-1 ${t().excluded ? "line-through" : ""} ${t().kind === "income" ? "text-gain" : t().kind === "transfer" ? "text-muted" : ""}`}
       >
         {t().amount_cents > 0 ? signedMoney(t().amount_cents, t().currency) : money(t().amount_cents, t().currency).replace("-", "−")}
       </div>
@@ -230,6 +263,12 @@ function TxRow(props: { tx: Tx; onAssign: (id: number | null) => void; onRule: (
             <IconButton icon="lucide:check" label="Valider cette catégorie" class="btn-xs" onClick={() => props.onAssign(t().category_id)} />
           </Show>
           <IconButton icon="lucide:list-filter-plus" label="Créer une règle pour ce libellé" class="btn-xs text-muted" onClick={props.onRule} />
+          <IconButton
+            icon={t().excluded ? "lucide:eye" : "lucide:eye-off"}
+            label={t().excluded ? "Réintégrer dans les statistiques" : "Exclure des statistiques et du budget"}
+            class="btn-xs text-muted"
+            onClick={props.onToggleExcluded}
+          />
         </div>
       </div>
     </li>

@@ -545,6 +545,8 @@ struct TxQuery {
     source: Option<String>,
     /// Masque les virements entre mes comptes et l'épargne.
     hide_transfers: Option<bool>,
+    /// « only » : seulement les opérations exclues.
+    excluded: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
 }
@@ -565,6 +567,7 @@ struct Tx {
     category_source: Option<String>,
     category_confidence: Option<f64>,
     kind: String,
+    excluded: bool,
 }
 
 async fn transactions(State(app): State<Arc<AppState>>, Query(q): Query<TxQuery>) -> ApiResult<Value> {
@@ -590,6 +593,9 @@ async fn transactions(State(app): State<Arc<AppState>>, Query(q): Query<TxQuery>
     if let Some(k) = q.kind.as_deref().filter(|k| ["expense", "income", "transfer"].contains(k)) {
         wh.push("l.kind = ?".into());
         ps.push(Sql::Text(k.to_string()));
+    }
+    if q.excluded.as_deref() == Some("only") {
+        wh.push("l.excluded = 1".into());
     }
     if q.hide_transfers == Some(true) && q.kind.as_deref() != Some("transfer") {
         wh.push("l.kind <> 'transfer'".into());
@@ -618,9 +624,9 @@ async fn transactions(State(app): State<Arc<AppState>>, Query(q): Query<TxQuery>
     let conn = app.db.lock().unwrap();
     let (total, income, expenses): (i64, i64, i64) = conn.query_row(
         &format!(
-            "SELECT COUNT(*), COALESCE(SUM(amount_cents) FILTER (WHERE kind = 'income'), 0),
-                    COALESCE(-SUM(amount_cents) FILTER (WHERE kind = 'expense'), 0)
-             FROM ledger l WHERE {where_sql}"
+            "SELECT COUNT(*), COALESCE(SUM(amount_cents) FILTER (WHERE kind = 'income' AND NOT excluded), 0),
+                    COALESCE(-SUM(amount_cents) FILTER (WHERE kind = 'expense' AND NOT excluded), 0)
+             FROM ledger_all l WHERE {where_sql}"
         ),
         params_from_iter(ps.iter()),
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
@@ -631,8 +637,8 @@ async fn transactions(State(app): State<Arc<AppState>>, Query(q): Query<TxQuery>
     let items: Vec<Tx> = conn
         .prepare(&format!(
             "SELECT l.id, l.day, l.label, l.counterparty, l.merchant, l.amount_cents, l.currency, l.status,
-                    l.account_hash, a.aspsp_name, l.category_id, l.category_source, l.category_confidence, l.kind
-             FROM ledger l JOIN accounts a ON a.hash = l.account_hash
+                    l.account_hash, a.aspsp_name, l.category_id, l.category_source, l.category_confidence, l.kind, l.excluded
+             FROM ledger_all l JOIN accounts a ON a.hash = l.account_hash
              WHERE {where_sql} ORDER BY l.day DESC, l.id DESC LIMIT ? OFFSET ?"
         ))?
         .query_map(params_from_iter(page_ps.iter()), |r| {
@@ -651,6 +657,7 @@ async fn transactions(State(app): State<Arc<AppState>>, Query(q): Query<TxQuery>
                 category_source: r.get(11)?,
                 category_confidence: r.get(12)?,
                 kind: r.get(13)?,
+                excluded: r.get(14)?,
             })
         })?
         .collect::<Result<_, _>>()?;
@@ -659,7 +666,11 @@ async fn transactions(State(app): State<Arc<AppState>>, Query(q): Query<TxQuery>
 
 #[derive(Deserialize)]
 struct TxUpdate {
-    category_id: Option<i64>,
+    /// Absent = inchangée, null = retour au classement automatique.
+    #[serde(default, deserialize_with = "nullable")]
+    category_id: Option<Option<i64>>,
+    /// Exclure (ou réintégrer) l'opération des statistiques et du budget.
+    excluded: Option<bool>,
 }
 
 async fn update_transaction(
@@ -671,7 +682,14 @@ async fn update_transaction(
     let merchant: Option<Option<String>> =
         conn.query_row("SELECT merchant FROM transactions WHERE id = ?1", [id], |r| r.get(0)).optional()?;
     let Some(merchant) = merchant else { return Err(ApiError::not_found("opération inconnue")) };
-    match body.category_id {
+    if let Some(ex) = body.excluded {
+        conn.execute("UPDATE transactions SET excluded = ?1 WHERE id = ?2", params![ex, id])?;
+        if body.category_id.is_none() {
+            return Ok(Json(json!({ "similar_updated": 0, "excluded": ex })));
+        }
+    }
+    let Some(category) = body.category_id else { return Err(ApiError::bad("rien à modifier")) };
+    match category {
         Some(cat) => {
             ensure_category(&conn, cat)?;
             conn.execute(

@@ -226,6 +226,23 @@ UPDATE categories SET nature = 'plaisir' WHERE kind = 'expense' AND name IN (
     'Restaurants & bars', 'Voyages', 'Abonnements & services en ligne', 'Shopping', 'Maison & bricolage',
     'Sport', 'Loisirs & sorties', 'Beauté & soins', 'Cadeaux & dons', 'Envois à des proches');
 ALTER TABLE portfolio_valuations ADD COLUMN gain_cents INTEGER;
+"#, r#"
+-- Opérations exclues des statistiques et du budget (restent visibles dans la liste).
+ALTER TABLE transactions ADD COLUMN excluded INTEGER NOT NULL DEFAULT 0;
+DROP VIEW ledger;
+CREATE VIEW ledger_all AS
+SELECT t.id, t.account_hash, t.day, substr(t.day, 1, 7) AS month, t.amount_cents, t.currency,
+       t.label, t.counterparty, t.merchant, t.status, t.category_id, t.category_source,
+       t.category_confidence,
+       COALESCE(c.kind, CASE WHEN t.amount_cents < 0 THEN 'expense' ELSE 'income' END) AS kind,
+       t.excluded
+FROM transactions t LEFT JOIN categories c ON c.id = t.category_id
+WHERE t.amount_cents <> 0 AND t.day IS NOT NULL;
+-- Toutes les analyses partent de cette vue : les exclusions s'appliquent partout.
+CREATE VIEW ledger AS SELECT * FROM ledger_all WHERE excluded = 0;
+
+-- Périmètre d'un poste : vie courante (permanent) ou alternance (temporaire).
+ALTER TABLE budget_lines ADD COLUMN scope TEXT NOT NULL DEFAULT 'vie' CHECK (scope IN ('vie', 'alternance'));
 "#];
 
 /// Catégories proposées au départ (toutes modifiables). Les descriptions guident l'IA.

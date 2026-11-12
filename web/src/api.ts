@@ -120,6 +120,7 @@ export interface BudgetLine {
   match: string | null;
   once_cents: number | null;
   position: number;
+  scope: "vie" | "alternance";
   /** id de période → centimes */
   amounts: Record<string, number>;
 }
@@ -175,6 +176,7 @@ export interface LineInput {
   once_cents?: number | null;
   position?: number;
   amounts?: Record<string, number | null>;
+  scope?: "vie" | "alternance";
 }
 
 export interface Tx {
@@ -192,6 +194,7 @@ export interface Tx {
   category_source: Source | null;
   category_confidence: number | null;
   kind: Kind;
+  excluded: boolean;
 }
 
 export interface TxPage {
@@ -363,6 +366,7 @@ export interface TxFilters {
   kind?: string;
   source?: string;
   hide_transfers?: boolean;
+  excluded?: string;
 }
 
 export const api = {
@@ -386,6 +390,7 @@ export const api = {
   recurring: () => call<RecurringResponse>("GET", "/recurring"),
   transactions: (f: TxFilters, limit = 100, offset = 0) =>
     call<TxPage>("GET", `/transactions${qs({ ...f, limit, offset })}`),
+  setExcluded: (id: number, excluded: boolean) => call<{ excluded: boolean }>("PATCH", `/transactions/${id}`, { excluded }),
   setCategory: (id: number, category_id: number | null) =>
     call<{ similar_updated: number; stats: CatStats }>("PATCH", `/transactions/${id}`, { category_id }),
   categories: () => call<Category[]>("GET", "/categories"),

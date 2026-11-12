@@ -1,4 +1,4 @@
-import { createMemo, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import { api, type Budget, type BudgetLine, type LineTrack, type RecurringItem, type Tracking } from "../../api";
 import { periodTotals, sections } from "../../budget";
 import { dayLabel, money, money0, monthLong, percent } from "../../format";
@@ -23,6 +23,7 @@ export function TrackingView(props: {
   onEditLine: (d: LineDraft) => void;
 }) {
   const t = () => props.tracking;
+  const [scopeFilter, setScopeFilter] = createSignal<"all" | "vie" | "alternance">("all");
   const period = () => t().period;
   const byLine = createMemo(() => new Map(t().lines.map((x) => [x.line_id, x])));
   const planned = createMemo(() => (period() ? periodTotals(props.budget, period()!.id) : null));
@@ -123,7 +124,24 @@ export function TrackingView(props: {
       </div>
 
       {/* Postes par section */}
-      <Card title={`Postes · ${period()?.name ?? ""}`} subtitle={`${monthLong(t().month)} · clique sur un poste pour régler son suivi`} class="!p-0 [&>header]:px-5 [&>header]:pt-5">
+      <Card
+        title={`Postes · ${period()?.name ?? ""}`}
+        subtitle={`${monthLong(t().month)} · clique sur un poste pour régler son suivi`}
+        class="!p-0 [&>header]:px-5 [&>header]:pt-5"
+        actions={
+          <Show when={props.budget.lines.some((l) => l.scope === "alternance")}>
+            <div class="tabs tabs-box tabs-xs" role="radiogroup" aria-label="Périmètre">
+              <For each={[{ v: "all", l: "Tout" }, { v: "vie", l: "Vie courante" }, { v: "alternance", l: "Alternance" }] as const}>
+                {(s) => (
+                  <button role="radio" aria-checked={scopeFilter() === s.v} class={`tab ${scopeFilter() === s.v ? "tab-active" : ""}`} onClick={() => setScopeFilter(s.v)}>
+                    {s.l}
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
+        }
+      >
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead>
@@ -137,7 +155,7 @@ export function TrackingView(props: {
               </tr>
             </thead>
             <tbody>
-              <For each={sections(props.budget.lines)}>
+              <For each={sections(props.budget.lines.filter((l) => scopeFilter() === "all" || (l.scope ?? "vie") === scopeFilter()))}>
                 {(s) => (
                   <>
                     <tr class="bg-base-200/60">
@@ -161,6 +179,7 @@ export function TrackingView(props: {
                               match: l.match,
                               once_cents: l.once_cents,
                               amounts: { ...l.amounts },
+                              scope: l.scope,
                             })
                           }
                           onSetPlanned={(c) => setPlanned(l, c)}

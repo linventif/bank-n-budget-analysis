@@ -168,6 +168,8 @@ pub struct Line {
     pub pattern: Option<String>,
     pub once_cents: Option<i64>,
     pub position: i64,
+    /// vie (permanent) | alternance (temporaire)
+    pub scope: String,
     /// period_id → montant prévu (centimes)
     pub amounts: HashMap<i64, i64>,
 }
@@ -208,7 +210,7 @@ pub fn get(conn: &Connection, id: i64) -> Result<Option<Budget>> {
         .collect::<Result<Vec<_>, _>>()?;
     let mut lines = conn
         .prepare(
-            "SELECT id, section, name, kind, category_id, match, once_cents, position FROM budget_lines
+            "SELECT id, section, name, kind, category_id, match, once_cents, position, scope FROM budget_lines
              WHERE budget_id = ?1 ORDER BY position, id",
         )?
         .query_map([id], |r| {
@@ -221,6 +223,7 @@ pub fn get(conn: &Connection, id: i64) -> Result<Option<Budget>> {
                 pattern: r.get(5)?,
                 once_cents: r.get(6)?,
                 position: r.get(7)?,
+                scope: r.get(8)?,
                 amounts: HashMap::new(),
             })
         })?
@@ -291,6 +294,8 @@ pub struct ImportLine {
     pub amounts: Vec<Option<f64>>,
     /// Montant annuel / ponctuel, en euros.
     pub once: Option<f64>,
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
 fn cents(e: f64) -> i64 {
@@ -338,8 +343,8 @@ pub fn import(conn: &mut Connection, b: &ImportBudget) -> Result<i64> {
             _ => None,
         };
         tx.execute(
-            "INSERT INTO budget_lines (budget_id, section, name, kind, category_id, match, once_cents, position)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO budget_lines (budget_id, section, name, kind, category_id, match, once_cents, position, scope)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 budget_id,
                 l.section.trim(),
@@ -348,7 +353,8 @@ pub fn import(conn: &mut Connection, b: &ImportBudget) -> Result<i64> {
                 cat,
                 l.pattern.as_deref().map(str::trim).filter(|p| !p.is_empty()),
                 l.once.map(cents),
-                i as i64
+                i as i64,
+                l.scope.as_deref().filter(|s| *s == "alternance").unwrap_or("vie")
             ],
         )?;
         let line_id = tx.last_insert_rowid();
@@ -405,6 +411,7 @@ pub fn from_detected(conn: &mut Connection, name: &str) -> Result<i64> {
             pattern: Some(r.merchant.clone()),
             amounts: vec![Some(r.monthly_cents as f64 / 100.0)],
             once: None,
+            scope: None,
         });
     }
     // Reste des dépenses par catégorie.
@@ -436,6 +443,7 @@ pub fn from_detected(conn: &mut Connection, name: &str) -> Result<i64> {
                 pattern: None,
                 amounts: vec![Some(((rest as f64 / 500.0).round() * 5.0).max(5.0))],
                 once: None,
+                scope: None,
             });
         }
     }
@@ -471,6 +479,7 @@ pub fn duplicate(conn: &mut Connection, id: i64, name: &str) -> Result<i64> {
             pattern: l.pattern.clone(),
             amounts: b.periods.iter().map(|p| l.amounts.get(&p.id).map(|c| *c as f64 / 100.0)).collect(),
             once: l.once_cents.map(|c| c as f64 / 100.0),
+            scope: Some(l.scope.clone()),
         })
         .collect();
     let calendar = b
@@ -729,6 +738,7 @@ mod tests {
             pattern: pattern.map(Into::into),
             once_cents: None,
             position: 0,
+            scope: "vie".into(),
             amounts: HashMap::new(),
         }
     }

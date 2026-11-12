@@ -15,6 +15,7 @@ export type LineDraft = {
   match: string | null;
   once_cents: number | null;
   amounts: Record<string, number | null>;
+  scope?: "vie" | "alternance";
 };
 
 const KINDS: LineKind[] = ["expense", "income", "salary", "info"];
@@ -51,6 +52,7 @@ export function LineDialog(props: { budget: Budget; draft: LineDraft | null; onC
         match: x.match?.trim() || null,
         once_cents: x.once_cents,
         amounts: x.amounts,
+        scope: x.scope ?? "vie",
       };
       if (x.id) await api.updateLine(x.id, body);
       else await api.addLine(props.budget.id, body);
@@ -116,6 +118,24 @@ export function LineDialog(props: { budget: Budget; draft: LineDraft | null; onC
                     : x().kind === "info"
                       ? "Affiché et suivi, mais exclu des totaux (salaire brut, épargne…)."
                       : "Compté dans les dépenses du budget."}
+              </p>
+            </fieldset>
+
+            <fieldset class="fieldset">
+              <legend class="fieldset-legend">Périmètre</legend>
+              <div class="tabs tabs-box tabs-sm w-fit" role="radiogroup">
+                <For each={[{ v: "vie", l: "Vie courante" }, { v: "alternance", l: "Alternance" }] as const}>
+                  {(s) => (
+                    <button type="button" role="radio" aria-checked={(x().scope ?? "vie") === s.v} class={`tab ${(x().scope ?? "vie") === s.v ? "tab-active" : ""}`} onClick={() => patch({ scope: s.v })}>
+                      {s.l}
+                    </button>
+                  )}
+                </For>
+              </div>
+              <p class="label whitespace-normal">
+                {(x().scope ?? "vie") === "alternance"
+                  ? "Temporaire : disparaît après l'alternance (loyer, APL, trajets…)."
+                  : "Permanent : reste après l'alternance (abonnements, mobile, sport…)."}
               </p>
             </fieldset>
 

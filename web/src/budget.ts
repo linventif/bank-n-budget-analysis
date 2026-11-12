@@ -31,8 +31,15 @@ const totalsOf = (lines: BudgetLine[], value: (l: BudgetLine) => number): Totals
   return { expense, income, salary, charge: expense - income, available: salary - (expense - income) };
 };
 
-/** Totaux mensuels d'une période. */
-export const periodTotals = (b: Budget, periodId: number) => totalsOf(b.lines, (l) => amountOf(l, periodId) ?? 0);
+export type Scope = "vie" | "alternance";
+const scoped = (b: Budget, scope?: Scope) => (scope ? b.lines.filter((l) => (l.scope ?? "vie") === scope) : b.lines);
+
+/** Totaux mensuels d'une période (éventuellement limités à un périmètre). */
+export const periodTotals = (b: Budget, periodId: number, scope?: Scope) =>
+  totalsOf(scoped(b, scope), (l) => amountOf(l, periodId) ?? 0);
+
+/** Montants annuels / ponctuels ramenés au mois (÷ 12), par type. */
+export const annualMonthly = (b: Budget, scope?: Scope) => totalsOf(scoped(b, scope), (l) => Math.round((l.once_cents ?? 0) / 12));
 
 /** Total d'un poste sur l'ensemble du budget : montant × mois de chaque période + ponctuel. */
 export const lineTotal = (b: Budget, l: BudgetLine) =>

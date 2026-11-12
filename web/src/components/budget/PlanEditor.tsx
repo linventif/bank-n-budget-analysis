@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { api, type Budget, type BudgetLine, type BudgetPeriod } from "../../api";
-import { amountOf, budgetTotals, KIND_LABEL, lineTotal, periodTotals, totalMonths } from "../../budget";
+import { amountOf, annualMonthly, budgetTotals, KIND_LABEL, lineTotal, periodTotals, totalMonths } from "../../budget";
 import { money, monthShortYear } from "../../format";
 import { errorText, store } from "../../store";
 import { EuroInput } from "../EuroInput";
@@ -43,6 +43,7 @@ export function PlanEditor(props: { budget: Budget; onChange: () => void; onEdit
     match: l.match,
     once_cents: l.once_cents,
     amounts: { ...l.amounts },
+    scope: l.scope,
   });
   const newLine = (section: string) =>
     props.onEditLine({ section, name: "", kind: "expense", category_id: null, match: null, once_cents: null, amounts: {} });
@@ -56,6 +57,16 @@ export function PlanEditor(props: { budget: Budget; onChange: () => void; onEdit
   const cols = () => b().periods.length + 4;
   const totals = createMemo(() => b().periods.map((p) => periodTotals(b(), p.id)));
   const grand = createMemo(() => budgetTotals(b()));
+  const annual = createMemo(() => annualMonthly(b()));
+  // Budget « après l'alternance » : uniquement les postes de vie courante, annuels lissés compris.
+  const after = createMemo(() =>
+    b().periods.map((p) => {
+      const t = periodTotals(b(), p.id, "vie");
+      const a = annualMonthly(b(), "vie");
+      return { period: p, expense: t.expense + a.expense, income: t.income + t.salary, available: t.available - a.expense + a.income };
+    }),
+  );
+  const hasAlternance = () => b().lines.some((l) => l.scope === "alternance");
   const onceExpense = () => b().lines.filter((l) => l.kind === "expense").reduce((a, l) => a + (l.once_cents ?? 0), 0);
 
   return (
@@ -113,6 +124,11 @@ export function PlanEditor(props: { budget: Budget; onChange: () => void; onEdit
                             <span class="min-w-0 flex-1">
                               <span class="block truncate font-medium group-hover:underline">{l.name}</span>
                               <span class="text-muted flex min-w-0 items-center gap-1.5 text-[11px] not-italic">
+                                <Show when={l.scope === "alternance"}>
+                                  <span class="badge badge-xs badge-soft badge-warning not-italic" title="Temporaire : disparaît après l'alternance">
+                                    alternance
+                                  </span>
+                                </Show>
                                 <Show when={l.kind !== "expense"}>
                                   <span class={l.kind === "income" || l.kind === "salary" ? "text-gain" : ""}>{KIND_LABEL[l.kind]}</span>
                                 </Show>
@@ -165,9 +181,36 @@ export function PlanEditor(props: { budget: Budget; onChange: () => void; onEdit
             <FootRow label="Reste à charge" strong values={totals().map((t) => t.charge)} total={grand().charge} />
             <FootRow label="Salaire net" values={totals().map((t) => t.salary)} total={grand().salary} />
             <FootRow label="Disponible (salaire − reste à charge)" strong tone values={totals().map((t) => t.available)} total={grand().available} />
+            <Show when={annual().expense}>
+              <FootRow label="annuels et ponctuels lissés (÷ 12)" sign="−" values={b().periods.map(() => annual().expense)} total={annual().expense * totalMonths(b())} />
+            </Show>
           </tfoot>
         </table>
       </div>
+      <Show when={hasAlternance()}>
+        <div class="border-base-200 border-t px-4 py-3">
+          <div class="mb-2 flex items-center gap-2 text-sm font-semibold">
+            <Ico icon="lucide:graduation-cap" /> Après l'alternance
+            <span class="text-muted text-xs font-normal">postes « vie courante » seulement, annuels lissés compris</span>
+          </div>
+          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <For each={after()}>
+              {(a) => (
+                <div class="bg-base-200/60 rounded-box px-3 py-2 text-sm">
+                  <div class="text-muted text-xs">base {a.period.name}</div>
+                  <div class="num">
+                    dépenses <span class="font-semibold">{money(a.expense)}</span>/mois
+                  </div>
+                  <div class="num">
+                    revenus <span class="font-semibold">{money(a.income)}</span>/mois
+                  </div>
+                  <div class={`num font-semibold ${a.available >= 0 ? "text-gain" : "text-error"}`}>disponible {money(a.available)}</div>
+                </div>
+              )}
+            </For>
+          </div>
+        </div>
+      </Show>
       <div class="border-base-200 flex flex-wrap gap-2 border-t px-4 py-3">
         <button class="btn btn-sm" onClick={() => newLine("")}>
           <Ico icon="lucide:plus" /> Poste
