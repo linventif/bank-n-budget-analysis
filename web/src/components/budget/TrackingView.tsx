@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { api, type Budget, type BudgetLine, type LineTrack, type RecurringItem, type Tracking } from "../../api";
-import { periodTotals, sections } from "../../budget";
+import { activeIn, periodTotals, sections } from "../../budget";
 import { dayLabel, money, money0, monthLong, percent } from "../../format";
 import { errorText, store } from "../../store";
 import { Card, CategoryIcon, Empty, Ico } from "../ui";
@@ -26,7 +26,7 @@ export function TrackingView(props: {
   const [scopeFilter, setScopeFilter] = createSignal<"all" | "vie" | "alternance">("all");
   const period = () => t().period;
   const byLine = createMemo(() => new Map(t().lines.map((x) => [x.line_id, x])));
-  const planned = createMemo(() => (period() ? periodTotals(props.budget, period()!.id) : null));
+  const planned = createMemo(() => (period() ? periodTotals(props.budget, period()!.id, undefined, t().month) : null));
   const idx = () => t().months.indexOf(t().month);
 
   // Ce qui reste à payer d'ici la fin du mois, d'après les postes de dépense pas encore (entièrement) passés.
@@ -155,7 +155,7 @@ export function TrackingView(props: {
               </tr>
             </thead>
             <tbody>
-              <For each={sections(props.budget.lines.filter((l) => scopeFilter() === "all" || (l.scope ?? "vie") === scopeFilter()))}>
+              <For each={sections(props.budget.lines.filter((l) => (scopeFilter() === "all" || (l.scope ?? "vie") === scopeFilter()) && activeIn(l, t().month)))}>
                 {(s) => (
                   <>
                     <tr class="bg-base-200/60">
@@ -180,6 +180,8 @@ export function TrackingView(props: {
                               once_cents: l.once_cents,
                               amounts: { ...l.amounts },
                               scope: l.scope,
+                              from_month: l.from_month,
+                              until_month: l.until_month,
                             })
                           }
                           onSetPlanned={(c) => setPlanned(l, c)}

@@ -123,6 +123,9 @@ export interface BudgetLine {
   once_cents: number | null;
   position: number;
   scope: "vie" | "alternance";
+  /** Premier / dernier mois (AAAA-MM) où le poste s'applique ; null = sans borne. */
+  from_month: string | null;
+  until_month: string | null;
   /** id de période → centimes */
   amounts: Record<string, number>;
 }
@@ -179,6 +182,8 @@ export interface LineInput {
   position?: number;
   amounts?: Record<string, number | null>;
   scope?: "vie" | "alternance";
+  from_month?: string | null;
+  until_month?: string | null;
 }
 
 export interface Tx {

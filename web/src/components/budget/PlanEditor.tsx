@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { api, type Budget, type BudgetLine, type BudgetPeriod } from "../../api";
-import { amountOf, annualMonthly, budgetTotals, KIND_LABEL, lineTotal, periodTotals, totalMonths } from "../../budget";
+import { amountOf, annualMonthly, budgetTotals, KIND_LABEL, lineTotal, periodTotals, rangeLabel, totalMonths } from "../../budget";
 import { money, monthShortYear } from "../../format";
 import { errorText, store } from "../../store";
 import { EuroInput } from "../EuroInput";
@@ -44,6 +44,8 @@ export function PlanEditor(props: { budget: Budget; onChange: () => void; onEdit
     once_cents: l.once_cents,
     amounts: { ...l.amounts },
     scope: l.scope,
+    from_month: l.from_month,
+    until_month: l.until_month,
   });
   const newLine = (section: string) =>
     props.onEditLine({ section, name: "", kind: "expense", category_id: null, match: null, once_cents: null, amounts: {} });
@@ -127,6 +129,11 @@ export function PlanEditor(props: { budget: Budget; onChange: () => void; onEdit
                                 <Show when={l.scope === "alternance"}>
                                   <span class="badge badge-xs badge-soft badge-warning not-italic" title="Temporaire : disparaît après l'alternance">
                                     alternance
+                                  </span>
+                                </Show>
+                                <Show when={l.from_month || l.until_month}>
+                                  <span class="badge badge-xs badge-soft badge-info not-italic" title="Le poste ne s'applique qu'à ces mois">
+                                    {rangeLabel(l, monthShortYear)}
                                   </span>
                                 </Show>
                                 <Show when={l.kind !== "expense"}>

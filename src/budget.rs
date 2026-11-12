@@ -265,6 +265,9 @@ pub struct Line {
     pub position: i64,
     /// vie (permanent) | alternance (temporaire)
     pub scope: String,
+    /// Premier et dernier mois (AAAA-MM) où le poste s'applique ; None = sans borne.
+    pub from_month: Option<String>,
+    pub until_month: Option<String>,
     /// period_id → montant prévu (centimes)
     pub amounts: HashMap<i64, i64>,
 }
@@ -305,7 +308,7 @@ pub fn get(conn: &Connection, id: i64) -> Result<Option<Budget>> {
         .collect::<Result<Vec<_>, _>>()?;
     let mut lines = conn
         .prepare(
-            "SELECT id, section, name, kind, category_id, match, once_cents, position, scope FROM budget_lines
+            "SELECT id, section, name, kind, category_id, match, once_cents, position, scope, from_month, until_month FROM budget_lines
              WHERE budget_id = ?1 ORDER BY position, id",
         )?
         .query_map([id], |r| {
@@ -319,6 +322,8 @@ pub fn get(conn: &Connection, id: i64) -> Result<Option<Budget>> {
                 once_cents: r.get(6)?,
                 position: r.get(7)?,
                 scope: r.get(8)?,
+                from_month: r.get(9)?,
+                until_month: r.get(10)?,
                 amounts: HashMap::new(),
             })
         })?
@@ -391,6 +396,22 @@ pub struct ImportLine {
     pub once: Option<f64>,
     #[serde(default)]
     pub scope: Option<String>,
+    #[serde(default)]
+    pub from_month: Option<String>,
+    #[serde(default)]
+    pub until_month: Option<String>,
+}
+
+/// AAAA-MM valide ?
+pub fn valid_month(s: &str) -> bool {
+    s.len() == 7 && ym(s).is_some_and(|(y, m)| (1900..3000).contains(&y) && (1..=12).contains(&m))
+}
+
+impl Line {
+    /// Le poste s'applique-t-il à ce mois (AAAA-MM) ?
+    pub fn active_in(&self, month: &str) -> bool {
+        self.from_month.as_deref().is_none_or(|f| month >= f) && self.until_month.as_deref().is_none_or(|u| month <= u)
+    }
 }
 
 fn cents(e: f64) -> i64 {
@@ -437,9 +458,10 @@ pub fn import(conn: &mut Connection, b: &ImportBudget) -> Result<i64> {
                 .optional()?,
             _ => None,
         };
+        let month = |m: &Option<String>| m.as_deref().map(str::trim).filter(|m| valid_month(m)).map(str::to_string);
         tx.execute(
-            "INSERT INTO budget_lines (budget_id, section, name, kind, category_id, match, once_cents, position, scope)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO budget_lines (budget_id, section, name, kind, category_id, match, once_cents, position, scope, from_month, until_month)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 budget_id,
                 l.section.trim(),
@@ -449,7 +471,9 @@ pub fn import(conn: &mut Connection, b: &ImportBudget) -> Result<i64> {
                 l.pattern.as_deref().map(str::trim).filter(|p| !p.is_empty()),
                 l.once.map(cents),
                 i as i64,
-                l.scope.as_deref().filter(|s| *s == "alternance").unwrap_or("vie")
+                l.scope.as_deref().filter(|s| *s == "alternance").unwrap_or("vie"),
+                month(&l.from_month),
+                month(&l.until_month)
             ],
         )?;
         let line_id = tx.last_insert_rowid();
@@ -507,6 +531,8 @@ pub fn from_detected(conn: &mut Connection, name: &str) -> Result<i64> {
             amounts: vec![Some(r.monthly_cents as f64 / 100.0)],
             once: None,
             scope: None,
+            from_month: None,
+            until_month: None,
         });
     }
     // Reste des dépenses par catégorie.
@@ -539,6 +565,8 @@ pub fn from_detected(conn: &mut Connection, name: &str) -> Result<i64> {
                 amounts: vec![Some(((rest as f64 / 500.0).round() * 5.0).max(5.0))],
                 once: None,
                 scope: None,
+                from_month: None,
+                until_month: None,
             });
         }
     }
@@ -575,6 +603,8 @@ pub fn duplicate(conn: &mut Connection, id: i64, name: &str) -> Result<i64> {
             amounts: b.periods.iter().map(|p| l.amounts.get(&p.id).map(|c| *c as f64 / 100.0)).collect(),
             once: l.once_cents.map(|c| c as f64 / 100.0),
             scope: Some(l.scope.clone()),
+            from_month: l.from_month.clone(),
+            until_month: l.until_month.clone(),
         })
         .collect();
     let calendar = b
@@ -768,7 +798,8 @@ pub fn tracking(conn: &Connection, budget_id: i64, month: Option<&str>, period_i
             let acc = per_line.get(&l.id);
             LineTrack {
                 line_id: l.id,
-                planned_cents: period.as_ref().and_then(|p| l.amounts.get(&p.id).copied()),
+                // Hors de sa plage de mois, le poste ne prévoit rien (ex. aide qui commence en janvier).
+                planned_cents: period.as_ref().and_then(|p| l.amounts.get(&p.id).copied()).map(|c| if l.active_in(&month) { c } else { 0 }),
                 actual_cents: tracked.then(|| acc.map_or(0, |a| a.cur)),
                 detected_cents: tracked.then(|| acc.map_or(0, |a| a.past) / 3),
                 count: acc.map_or(0, |a| a.count),
@@ -834,8 +865,23 @@ mod tests {
             once_cents: None,
             position: 0,
             scope: "vie".into(),
+            from_month: None,
+            until_month: None,
             amounts: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn month_range() {
+        let mut l = line("income", None, None);
+        assert!(l.active_in("2026-09"));
+        l.from_month = Some("2027-01".into());
+        assert!(!l.active_in("2026-12"));
+        assert!(l.active_in("2027-01"));
+        l.until_month = Some("2027-08".into());
+        assert!(l.active_in("2027-08"));
+        assert!(!l.active_in("2027-09"));
+        assert!(valid_month("2027-01") && !valid_month("2027-13") && !valid_month("2027-1"));
     }
     fn tx(amount: i64, cat: Option<i64>, text: &str) -> Tx {
         Tx { month: "2026-11".into(), day: "2026-11-02".into(), amount, kind: "expense".into(), category: cat, text: text.into() }

@@ -289,6 +289,8 @@ struct LineInput {
     #[serde(default)]
     amounts: HashMap<String, Option<i64>>,
     scope: Option<String>,
+    from_month: Option<String>,
+    until_month: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -306,6 +308,23 @@ struct LineUpdate {
     #[serde(default)]
     amounts: HashMap<String, Option<i64>>,
     scope: Option<String>,
+    #[serde(default, deserialize_with = "nullable")]
+    from_month: Option<Option<String>>,
+    #[serde(default, deserialize_with = "nullable")]
+    until_month: Option<Option<String>>,
+}
+
+/// Plage de mois d'un poste : AAAA-MM, début ≤ fin ; vide = sans borne.
+fn check_months(from: Option<&str>, until: Option<&str>) -> Result<(), ApiError> {
+    for m in [from, until].into_iter().flatten() {
+        if !budget::valid_month(m) {
+            return Err(ApiError::bad("mois invalide (AAAA-MM)"));
+        }
+    }
+    match (from, until) {
+        (Some(f), Some(u)) if f > u => Err(ApiError::bad("le premier mois est après le dernier")),
+        _ => Ok(()),
+    }
 }
 
 fn check_scope(s: Option<&str>) -> Result<(), ApiError> {
@@ -359,6 +378,9 @@ async fn add_line(State(app): State<Arc<AppState>>, Path(id): Path<i64>, Json(l)
     check_name(&l.name)?;
     check_kind(&l.kind)?;
     check_scope(l.scope.as_deref())?;
+    let from = l.from_month.as_deref().map(str::trim).filter(|m| !m.is_empty());
+    let until = l.until_month.as_deref().map(str::trim).filter(|m| !m.is_empty());
+    check_months(from, until)?;
     if let Some(c) = l.once_cents {
         check_amount(c)?;
     }
@@ -368,8 +390,8 @@ async fn add_line(State(app): State<Arc<AppState>>, Path(id): Path<i64>, Json(l)
     }
     check_category(&conn, l.category_id)?;
     conn.execute(
-        "INSERT INTO budget_lines (budget_id, section, name, kind, category_id, match, once_cents, position, scope)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, (SELECT COALESCE(MAX(position), -1) + 1 FROM budget_lines WHERE budget_id = ?1), ?8)",
+        "INSERT INTO budget_lines (budget_id, section, name, kind, category_id, match, once_cents, position, scope, from_month, until_month)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, (SELECT COALESCE(MAX(position), -1) + 1 FROM budget_lines WHERE budget_id = ?1), ?8, ?9, ?10)",
         params![
             id,
             l.section.trim(),
@@ -378,7 +400,9 @@ async fn add_line(State(app): State<Arc<AppState>>, Path(id): Path<i64>, Json(l)
             l.category_id,
             l.pattern.as_deref().map(str::trim).filter(|p| !p.is_empty()),
             l.once_cents,
-            l.scope.as_deref().unwrap_or("vie")
+            l.scope.as_deref().unwrap_or("vie"),
+            from,
+            until
         ],
     )?;
     let line_id = conn.last_insert_rowid();
@@ -401,6 +425,12 @@ async fn update_line(State(app): State<Arc<AppState>>, Path(id): Path<i64>, Json
     let budget: Option<i64> = conn.query_row("SELECT budget_id FROM budget_lines WHERE id = ?1", [id], |r| r.get(0)).optional()?;
     let Some(budget) = budget else { return Err(ApiError::not_found("poste inconnu")) };
     check_category(&conn, l.category_id.flatten())?;
+    // Plage finale (champ absent = valeur actuelle) pour vérifier début ≤ fin.
+    let norm = |m: &Option<Option<String>>| m.clone().map(|v| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
+    let (from, until) = (norm(&l.from_month), norm(&l.until_month));
+    let (cur_from, cur_until): (Option<String>, Option<String>) =
+        conn.query_row("SELECT from_month, until_month FROM budget_lines WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    check_months(from.clone().unwrap_or(cur_from).as_deref(), until.clone().unwrap_or(cur_until).as_deref())?;
     conn.execute(
         "UPDATE budget_lines SET
             section = COALESCE(?1, section), name = COALESCE(?2, name), kind = COALESCE(?3, kind),
@@ -408,7 +438,9 @@ async fn update_line(State(app): State<Arc<AppState>>, Path(id): Path<i64>, Json
             match = CASE WHEN ?6 THEN ?7 ELSE match END,
             once_cents = CASE WHEN ?8 THEN ?9 ELSE once_cents END,
             position = COALESCE(?10, position),
-            scope = COALESCE(?12, scope)
+            scope = COALESCE(?12, scope),
+            from_month = CASE WHEN ?13 THEN ?14 ELSE from_month END,
+            until_month = CASE WHEN ?15 THEN ?16 ELSE until_month END
          WHERE id = ?11",
         params![
             l.section.as_deref().map(str::trim),
@@ -422,7 +454,11 @@ async fn update_line(State(app): State<Arc<AppState>>, Path(id): Path<i64>, Json
             l.once_cents.flatten(),
             l.position,
             id,
-            l.scope
+            l.scope,
+            from.is_some(),
+            from.flatten(),
+            until.is_some(),
+            until.flatten()
         ],
     )?;
     write_amounts(&conn, budget, id, &l.amounts)?;

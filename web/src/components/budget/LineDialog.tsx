@@ -16,6 +16,8 @@ export type LineDraft = {
   once_cents: number | null;
   amounts: Record<string, number | null>;
   scope?: "vie" | "alternance";
+  from_month?: string | null;
+  until_month?: string | null;
 };
 
 const KINDS: LineKind[] = ["expense", "income", "salary", "info"];
@@ -53,6 +55,8 @@ export function LineDialog(props: { budget: Budget; draft: LineDraft | null; onC
         once_cents: x.once_cents,
         amounts: x.amounts,
         scope: x.scope ?? "vie",
+        from_month: x.from_month || null,
+        until_month: x.until_month || null,
       };
       if (x.id) await api.updateLine(x.id, body);
       else await api.addLine(props.budget.id, body);
@@ -137,6 +141,21 @@ export function LineDialog(props: { budget: Budget; draft: LineDraft | null; onC
                   ? "Temporaire : disparaît après l'alternance (loyer, APL, trajets…)."
                   : "Permanent : reste après l'alternance (abonnements, mobile, sport…)."}
               </p>
+            </fieldset>
+
+            <fieldset class="fieldset">
+              <legend class="fieldset-legend">Mois concernés</legend>
+              <div class="grid gap-2 sm:grid-cols-2">
+                <label class="input w-full">
+                  <span class="text-muted text-xs">À partir de</span>
+                  <input type="month" value={x().from_month ?? ""} onInput={(e) => patch({ from_month: e.currentTarget.value || null })} />
+                </label>
+                <label class="input w-full">
+                  <span class="text-muted text-xs">Jusqu'à</span>
+                  <input type="month" value={x().until_month ?? ""} min={x().from_month ?? undefined} onInput={(e) => patch({ until_month: e.currentTarget.value || null })} />
+                </label>
+              </div>
+              <p class="label whitespace-normal">Vide = tous les mois. Hors de cette plage, le poste ne prévoit rien (ex. une aide qui commence en janvier).</p>
             </fieldset>
 
             <fieldset class="fieldset">

@@ -255,6 +255,10 @@ CREATE TABLE recurring_manual (
     expected_cents INTEGER,
     created_at     TEXT NOT NULL
 );
+"#, r#"
+-- Poste actif seulement sur une plage de mois (AAAA-MM, bornes incluses) : aide qui commence en janvier…
+ALTER TABLE budget_lines ADD COLUMN from_month TEXT;
+ALTER TABLE budget_lines ADD COLUMN until_month TEXT;
 "#];
 
 /// Catégories proposées au départ (toutes modifiables). Les descriptions guident l'IA.
