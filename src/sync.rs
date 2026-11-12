@@ -35,7 +35,7 @@ pub fn store_session(conn: &mut Connection, s: &eb::Session) -> Result<usize> {
                 uid = excluded.uid, session_id = excluded.session_id, aspsp_name = excluded.aspsp_name,
                 iban = excluded.iban, name = excluded.name, details = excluded.details, product = excluded.product,
                 currency = excluded.currency, cash_account_type = excluded.cash_account_type,
-                raw = excluded.raw, last_error = NULL",
+                raw = excluded.raw, last_error = NULL, closed_at = NULL",
             params![
                 a.identification_hash,
                 a.uid,
@@ -54,6 +54,38 @@ pub fn store_session(conn: &mut Connection, s: &eb::Session) -> Result<usize> {
     }
     tx.commit()?;
     Ok(n)
+}
+
+/// Synchro périodique : capte les opérations avant qu'elles ne disparaissent côté banque
+/// (pocket supprimée, historique limité à 90 jours…). Vérifie toutes les 10 minutes si la
+/// dernière synchro réussie date de plus de `hours` heures.
+pub fn schedule(state: Arc<AppState>, hours: u64) {
+    if hours == 0 || state.eb.is_none() {
+        return;
+    }
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(600));
+        loop {
+            tick.tick().await;
+            let due = {
+                let conn = state.db.lock().unwrap();
+                let oldest: Option<String> = conn
+                    .query_row("SELECT MIN(COALESCE(last_sync, '')) FROM accounts WHERE closed_at IS NULL AND uid IS NOT NULL", [], |r| r.get(0))
+                    .unwrap_or(None);
+                match oldest.as_deref() {
+                    None => false,
+                    Some("") => true,
+                    Some(t) => chrono::DateTime::parse_from_rfc3339(t)
+                        .map(|t| chrono::Utc::now().signed_duration_since(t) > chrono::Duration::hours(hours as i64))
+                        .unwrap_or(true),
+                }
+            };
+            if due {
+                tracing::info!("synchro automatique");
+                spawn(state.clone());
+            }
+        }
+    });
 }
 
 /// Lance une synchro en tâche de fond, sauf si une est déjà en cours.
@@ -97,7 +129,7 @@ async fn run(state: &AppState) -> Result<String> {
             "SELECT a.hash, a.uid, a.session_id,
                     (SELECT MAX(booking_date) FROM transactions t WHERE t.account_hash = a.hash AND t.status = 'BOOK')
              FROM accounts a JOIN sessions s ON s.session_id = a.session_id
-             WHERE a.uid IS NOT NULL AND s.status = 'AUTHORIZED' AND s.valid_until > ?1",
+             WHERE a.uid IS NOT NULL AND a.closed_at IS NULL AND s.status = 'AUTHORIZED' AND s.valid_until > ?1",
         )?;
         stmt.query_map([db::now()], |r| {
             Ok(Target { hash: r.get(0)?, uid: r.get(1)?, session_id: r.get(2)?, last_booking: r.get(3)? })
@@ -120,6 +152,14 @@ async fn run(state: &AppState) -> Result<String> {
                 tracing::warn!(account = %t.hash, "synchro échouée : {e:#}");
                 let conn = state.db.lock().unwrap();
                 conn.execute("UPDATE accounts SET last_error = ?1 WHERE hash = ?2", params![format!("{e:#}"), t.hash])?;
+                if e.downcast_ref::<ApiError>().is_some_and(ApiError::is_account_gone) {
+                    // Les opérations déjà récupérées restent en base ; on arrête juste de l'interroger.
+                    conn.execute(
+                        "UPDATE accounts SET closed_at = ?1, last_error = NULL WHERE hash = ?2",
+                        params![db::now(), t.hash],
+                    )?;
+                    tracing::info!(account = %t.hash, "compte disparu côté banque : marqué fermé, historique conservé");
+                }
                 if e.downcast_ref::<ApiError>().is_some_and(ApiError::is_session_dead) {
                     conn.execute("UPDATE sessions SET status = 'EXPIRED' WHERE session_id = ?1", [&t.session_id])?;
                 }

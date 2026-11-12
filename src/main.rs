@@ -97,6 +97,9 @@ async fn main() -> Result<()> {
         auth,
     });
 
+    if let Some(eb) = &state.cfg.enable_banking {
+        sync::schedule(state.clone(), eb.auto_sync_hours);
+    }
     let public = axum::serve(public_listener, web::public::router(state.clone())).with_graceful_shutdown(shutdown());
     let local = axum::serve(local_listener, web::local::router(state)).with_graceful_shutdown(shutdown());
     tokio::try_join!(async { public.await }, async { local.await })?;

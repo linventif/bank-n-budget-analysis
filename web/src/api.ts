@@ -29,6 +29,8 @@ export interface Account {
   valid_until: string | null;
   expired: boolean;
   tx_count: number;
+  closed_at: string | null;
+  cash_account_type: string | null;
 }
 
 export interface Totals {
@@ -206,6 +208,19 @@ export interface Rule {
   matches: number;
 }
 
+export interface RuleSuggestion {
+  key: string;
+  patterns: string[];
+  category_id: number | null;
+  share: number;
+  matches: number;
+  months: number;
+  recategorized: number;
+  reason: "similar" | "recurring" | "frequent";
+  merchants: string[];
+  categories: { category_id: number | null; count: number }[];
+}
+
 export interface CatStats {
   rule: number;
   memory: number;
@@ -351,6 +366,11 @@ export const api = {
   createRule: (pattern: string, category_id: number) =>
     call<{ id: number; stats: CatStats }>("POST", "/rules", { pattern, category_id }),
   deleteRule: (id: number) => call<{ ok: true }>("DELETE", `/rules/${id}`),
+  createRules: (patterns: string[], category_id: number) =>
+    call<{ ok: true; stats: CatStats }>("POST", "/rules/batch", { patterns, category_id }),
+  ruleSuggestions: () => call<{ items: RuleSuggestion[]; dismissed: number }>("GET", "/rules/suggestions"),
+  dismissSuggestion: (key: string) => call<{ ok: true }>("POST", "/rules/suggestions/dismiss", { key }),
+  resetSuggestions: () => call<{ ok: true }>("DELETE", "/rules/suggestions"),
   sync: () => call<{ started: boolean }>("POST", "/sync", {}),
   cancelClassify: () => call<{ cancelling: boolean }>("POST", "/classify/cancel", {}),
   classify: (reclassify = false) => call<{ stats: CatStats; ai_started: boolean }>("POST", "/classify", { reclassify }),

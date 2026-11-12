@@ -52,6 +52,11 @@ impl std::error::Error for ApiError {}
 
 impl ApiError {
     /// La session n'est plus utilisable : il faut réautoriser la banque.
+    /// Le compte n'existe plus (ou plus accessible) chez la banque, ex. pocket Revolut supprimée.
+    pub fn is_account_gone(&self) -> bool {
+        matches!(self.error.as_deref(), Some("ACCOUNT_DOES_NOT_EXIST" | "ASPSP_ACCOUNT_NOT_ACCESSIBLE"))
+    }
+
     pub fn is_session_dead(&self) -> bool {
         matches!(
             self.error.as_deref(),

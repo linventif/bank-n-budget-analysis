@@ -94,6 +94,10 @@ pub struct EnableBanking {
     /// Durée de consentement demandée (plafonnée par la banque, souvent 180 j).
     #[serde(default = "default_consent_days")]
     pub consent_days: i64,
+    /// Synchro automatique toutes les N heures (0 = désactivée). Les banques limitent
+    /// souvent à 4 récupérations automatiques par jour : 8 h en laisse une pour le manuel.
+    #[serde(default = "default_auto_sync_hours")]
+    pub auto_sync_hours: u64,
 }
 
 fn default_public_addr() -> SocketAddr {
@@ -110,6 +114,9 @@ fn default_web_dir() -> PathBuf {
 }
 fn default_countries() -> Vec<String> {
     vec!["FR".into()]
+}
+fn default_auto_sync_hours() -> u64 {
+    8
 }
 fn default_consent_days() -> i64 {
     180

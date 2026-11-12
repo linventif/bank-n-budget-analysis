@@ -1,5 +1,5 @@
 import { createResource, createSignal, For, Show } from "solid-js";
-import { api, type Category, type Kind } from "../api";
+import { api, type Category, type Kind, type RuleSuggestion } from "../api";
 import { CategoryPicker } from "../components/CategoryPicker";
 import { IconPicker } from "../components/IconPicker";
 import { Card, CategoryIcon, Empty, Ico, IconButton, KindLabel, Spinner } from "../components/ui";
@@ -219,7 +219,12 @@ function Rules() {
   };
 
   return (
-    <Card title="Règles" subtitle="Prioritaires sur l'IA, appliquées aussi aux futures opérations" class="self-start">
+    <Card
+      title="Règles"
+      subtitle="Prioritaires sur l'IA, appliquées aussi aux futures opérations"
+      class="self-start"
+      actions={<RuleSuggestions />}
+    >
       <form class="flex flex-col gap-2" onSubmit={add}>
         <label class="input input-sm w-full">
           <span class="text-muted text-xs">Contient</span>
@@ -266,5 +271,162 @@ function Rules() {
         </Show>
       </div>
     </Card>
+  );
+}
+
+const REASON: Record<RuleSuggestion["reason"], { label: string; icon: string }> = {
+  similar: { label: "Libellés similaires", icon: "lucide:copy" },
+  recurring: { label: "Récurrent", icon: "lucide:repeat" },
+  frequent: { label: "Fréquent", icon: "lucide:activity" },
+};
+
+/** Bouton + modale : règles probables (même enseigne sous plusieurs libellés, marchands récurrents). */
+function RuleSuggestions() {
+  let dialog!: HTMLDialogElement;
+  const [open, setOpen] = createSignal(false);
+  const [data, { refetch }] = createResource(open, () => api.ruleSuggestions());
+
+  const show = () => {
+    setOpen(true);
+    refetch();
+    dialog.showModal();
+  };
+  const reset = async () => {
+    try {
+      await api.resetSuggestions();
+      refetch();
+    } catch (e) {
+      store.toast(errorText(e), "error");
+    }
+  };
+
+  return (
+    <>
+      <button class="btn btn-sm btn-ghost" onClick={show} title="Proposer des règles à partir de tes opérations">
+        <Ico icon="lucide:sparkles" /> Suggérer
+      </button>
+      <dialog ref={dialog} class="modal" onClose={() => setOpen(false)}>
+        <div class="modal-box flex max-h-[85vh] max-w-2xl flex-col p-0">
+          <div class="border-base-200 border-b px-5 py-4">
+            <h3 class="text-lg font-semibold">Règles suggérées</h3>
+            <p class="text-muted mt-0.5 text-sm">
+              Enseignes vues sous plusieurs libellés et marchands récurrents. Catégorie proposée : celle déjà majoritaire, modifiable.
+            </p>
+          </div>
+          <div class="min-h-0 flex-1 overflow-y-auto px-5">
+            <Show when={data.latest} fallback={<div class="flex justify-center py-10"><Spinner /></div>}>
+              <Show
+                when={data.latest!.items.length}
+                fallback={
+                  <Empty icon="lucide:check-check" title="Rien à proposer">
+                    Tes opérations similaires sont déjà couvertes par des règles.
+                  </Empty>
+                }
+              >
+                <ul class="divide-base-200 divide-y">
+                  <For each={data.latest!.items}>{(sug) => <SuggestionRow s={sug} mount={dialog} onDone={refetch} />}</For>
+                </ul>
+              </Show>
+            </Show>
+          </div>
+          <div class="border-base-200 flex items-center justify-between gap-3 border-t px-5 py-3">
+            <span class="text-muted text-xs">
+              <Show when={data.latest?.dismissed}>
+                {(n) => (
+                  <>
+                    {n()} ignorée{n() > 1 ? "s" : ""} ·{" "}
+                    <button class="link" onClick={reset}>
+                      réafficher
+                    </button>
+                  </>
+                )}
+              </Show>
+            </span>
+            <button class="btn btn-sm" onClick={() => dialog.close()}>
+              Fermer
+            </button>
+          </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+          <button>fermer</button>
+        </form>
+      </dialog>
+    </>
+  );
+}
+
+function SuggestionRow(props: { s: RuleSuggestion; mount: Node; onDone: () => void }) {
+  const s = () => props.s;
+  const [category, setCategory] = createSignal<number | null>(props.s.category_id);
+  const [busy, setBusy] = createSignal(false);
+  const mixed = () => s().categories.length > 1;
+
+  const accept = async () => {
+    if (category() == null) return;
+    setBusy(true);
+    try {
+      const r = await api.createRules(s().patterns, category()!);
+      const n = r.stats.rule;
+      store.toast(`Règle${s().patterns.length > 1 ? "s" : ""} créée${s().patterns.length > 1 ? "s" : ""} · ${n} opération${n > 1 ? "s" : ""} classée${n > 1 ? "s" : ""} par règle`, "success");
+      store.bump();
+      props.onDone();
+    } catch (e) {
+      store.toast(errorText(e), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const dismiss = async () => {
+    try {
+      await api.dismissSuggestion(s().key);
+      props.onDone();
+    } catch (e) {
+      store.toast(errorText(e), "error");
+    }
+  };
+
+  return (
+    <li class="flex flex-col gap-2 py-3.5">
+      <div class="flex flex-wrap items-center gap-1.5">
+        <For each={s().patterns}>{(p) => <span class="badge badge-neutral badge-sm font-mono">{p}</span>}</For>
+        <span class="text-muted inline-flex items-center gap-1 text-xs">
+          <Ico icon={REASON[s().reason].icon} /> {REASON[s().reason].label}
+        </span>
+        <span class="text-muted ml-auto text-xs">
+          {s().matches} opération{s().matches > 1 ? "s" : ""} · {s().months} mois
+        </span>
+      </div>
+      <p class="text-ink-2 truncate text-xs" title={s().merchants.join(" · ")}>
+        {s().merchants.slice(0, 4).join(" · ")}
+        <Show when={s().merchants.length > 4}> · +{s().merchants.length - 4}</Show>
+      </p>
+      <Show when={mixed()}>
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          <span class="text-warning inline-flex items-center gap-1">
+            <Ico icon="lucide:shuffle" /> Classées aujourd'hui en :
+          </span>
+          <For each={s().categories}>
+            {(c) => (
+              <span class="text-muted inline-flex items-center gap-1">
+                {c.category_id == null ? "Non classé" : (store.categoryById().get(c.category_id)?.name ?? "?")}
+                <span class="tabular-nums">×{c.count}</span>
+              </span>
+            )}
+          </For>
+        </div>
+      </Show>
+      <div class="flex items-center gap-2">
+        <div class="border-base-300 rounded-field min-w-0 flex-1 border px-1">
+          <CategoryPicker value={category()} onChange={setCategory} placeholder="Catégorie…" class="w-full" mount={props.mount} />
+        </div>
+        <button class="btn btn-sm btn-primary" disabled={busy() || category() == null} onClick={accept}>
+          <Show when={busy()} fallback={<Ico icon="lucide:check" />}>
+            <Spinner class="loading-xs" />
+          </Show>
+          Créer
+        </button>
+        <IconButton icon="lucide:eye-off" label="Ignorer cette suggestion" class="text-muted" onClick={dismiss} />
+      </div>
+    </li>
   );
 }

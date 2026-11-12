@@ -156,6 +156,8 @@ struct Account {
     valid_until: Option<String>,
     expired: bool,
     tx_count: i64,
+    closed_at: Option<String>,
+    cash_account_type: Option<String>,
 }
 
 async fn accounts(State(app): State<Arc<AppState>>) -> ApiResult<Vec<Account>> {
@@ -165,9 +167,9 @@ async fn accounts(State(app): State<Arc<AppState>>) -> ApiResult<Vec<Account>> {
         .prepare(
             "SELECT a.hash, a.aspsp_name, a.name, a.product, a.iban, a.currency, a.balance_cents, a.balance_date,
                     a.last_sync, a.last_error, s.valid_until, s.status,
-                    (SELECT COUNT(*) FROM transactions t WHERE t.account_hash = a.hash)
+                    (SELECT COUNT(*) FROM transactions t WHERE t.account_hash = a.hash), a.closed_at, a.cash_account_type
              FROM accounts a LEFT JOIN sessions s ON s.session_id = a.session_id
-             ORDER BY a.aspsp_name, a.name",
+             ORDER BY a.closed_at IS NOT NULL, a.aspsp_name, a.cash_account_type, a.name",
         )?
         .query_map([], |r| {
             let valid_until: Option<String> = r.get(10)?;
@@ -187,6 +189,8 @@ async fn accounts(State(app): State<Arc<AppState>>) -> ApiResult<Vec<Account>> {
                     || valid_until.as_deref().is_none_or(|v| v <= now.as_str()),
                 valid_until,
                 tx_count: r.get(12)?,
+                closed_at: r.get(13)?,
+                cash_account_type: r.get(14)?,
             })
         })?
         .collect::<Result<_, _>>()?;
@@ -270,8 +274,11 @@ fn first_full_month(conn: &Connection) -> rusqlite::Result<Option<Ym>> {
 async fn summary(State(app): State<Arc<AppState>>, Query(q): Query<MonthQuery>) -> ApiResult<Summary> {
     let conn = app.db.lock().unwrap();
     let months = months_available(&conn)?;
-    let balance_cents: i64 =
-        conn.query_row("SELECT COALESCE(SUM(balance_cents), 0) FROM accounts WHERE currency = 'EUR'", [], |r| r.get(0))?;
+    let balance_cents: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(balance_cents), 0) FROM accounts WHERE currency = 'EUR' AND closed_at IS NULL",
+        [],
+        |r| r.get(0),
+    )?;
     let Some(last) = months.last().cloned() else {
         return Ok(Json(Summary { balance_cents, ..Default::default() }));
     };

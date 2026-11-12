@@ -184,6 +184,9 @@ CREATE TABLE budget_calendar (
     period_id INTEGER NOT NULL REFERENCES budget_periods(id) ON DELETE CASCADE,
     PRIMARY KEY (budget_id, month)
 );
+"#, r#"
+-- Compte disparu côté banque (pocket supprimée…) : plus synchronisé, historique conservé.
+ALTER TABLE accounts ADD COLUMN closed_at TEXT;
 "#];
 
 /// Catégories proposées au départ (toutes modifiables). Les descriptions guident l'IA.

@@ -31,13 +31,16 @@ export default function Accounts() {
               {(a) => {
                 const left = () => (a.valid_until ? daysUntil(a.valid_until) : null);
                 return (
-                  <div class="card-surface flex flex-col gap-3 p-5">
+                  <div class={`card-surface flex flex-col gap-3 p-5 ${a.closed_at ? "opacity-70" : ""}`}>
                     <div class="flex items-center gap-3">
                       <span class="bg-base-200 inline-flex size-10 items-center justify-center rounded-xl text-lg">
-                        <Ico icon="lucide:landmark" />
+                        <Ico icon={a.cash_account_type === "SVGS" ? "lucide:piggy-bank" : "lucide:landmark"} />
                       </span>
                       <div class="min-w-0">
-                        <div class="font-semibold">{a.bank}</div>
+                        <div class="font-semibold">
+                          {a.bank}
+                          <span class="text-muted font-normal"> · {a.cash_account_type === "SVGS" ? "épargne / pocket" : "compte courant"}</span>
+                        </div>
                         <div class="text-muted truncate text-xs">{[a.product, a.iban].filter(Boolean).join(" · ") || a.name}</div>
                       </div>
                     </div>
@@ -52,12 +55,21 @@ export default function Accounts() {
                         <Ico icon="lucide:circle-alert" class="mt-0.5" /> {a.last_error}
                       </div>
                     </Show>
-                    <div class={`flex items-center gap-1.5 text-xs ${a.expired ? "text-error" : (left() ?? 99) < 15 ? "text-ink-2" : "text-muted"}`}>
-                      <Ico icon={a.expired ? "lucide:circle-x" : "lucide:shield-check"} />
-                      <Show when={!a.expired} fallback="Accès expiré : reconnecte la banque ci-dessous">
-                        Accès autorisé encore {left()} jours
-                      </Show>
-                    </div>
+                    <Show
+                      when={!a.closed_at}
+                      fallback={
+                        <div class="text-ink-2 flex items-center gap-1.5 text-xs" title="La banque ne renvoie plus ce compte (pocket supprimée…)">
+                          <Ico icon="lucide:archive" /> Fermé côté banque · historique conservé
+                        </div>
+                      }
+                    >
+                      <div class={`flex items-center gap-1.5 text-xs ${a.expired ? "text-error" : (left() ?? 99) < 15 ? "text-ink-2" : "text-muted"}`}>
+                        <Ico icon={a.expired ? "lucide:circle-x" : "lucide:shield-check"} />
+                        <Show when={!a.expired} fallback="Accès expiré : reconnecte la banque ci-dessous">
+                          Accès autorisé encore {left()} jours
+                        </Show>
+                      </div>
+                    </Show>
                   </div>
                 );
               }}

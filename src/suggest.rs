@@ -86,7 +86,9 @@ pub fn reset_dismissed(conn: &Connection) -> Result<()> {
 
 pub fn suggestions(conn: &Connection) -> Result<Vec<Suggestion>> {
     // Même texte que l'application des règles (`upper` de SQLite : ASCII uniquement).
-    let mut locations: HashSet<String> = HashSet::new();
+    // Premier mot des paiements carte → mots qui le suivent.
+    let mut card_heads: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut card_merchants: HashSet<String> = HashSet::new();
     let mut txs: Vec<Tx> = Vec::new();
     let mut stmt = conn.prepare(
         "SELECT id, upper(label || ' ' || COALESCE(counterparty, '') || ' ' || COALESCE(merchant, '')), merchant,
@@ -107,14 +109,19 @@ pub fn suggestions(conn: &Connection) -> Result<Vec<Suggestion>> {
         };
         // Crédit Mutuel : « PAIEMENT CB 0511 TOULOUSE LIDL » → la ville vient en premier.
         if merchant::is_card_payment(&r.get::<_, String>(8)?) {
-            if let [first, _, ..] = words(&tx.merchant)[..] {
-                locations.insert(first.to_string());
+            card_merchants.insert(tx.merchant.clone());
+            if let [first, next, ..] = words(&tx.merchant)[..] {
+                card_heads.entry(first.to_string()).or_default().insert(next.to_string());
             }
         }
         txs.push(tx);
     }
     drop(rows);
     drop(stmt);
+    // Une ville précède plusieurs marchands (« TOULOUSE LIDL », « TOULOUSE AUCHAN ») ; un premier mot
+    // toujours suivi du même (« TISSEO OPEN P ») est plutôt l'enseigne elle-même.
+    let locations: HashSet<String> =
+        card_heads.into_iter().filter(|(_, next)| next.len() >= 2).map(|(first, _)| first).collect();
 
     let holders: HashSet<String> = conn
         .prepare("SELECT DISTINCT name FROM accounts WHERE name IS NOT NULL")?
@@ -133,19 +140,37 @@ pub fn suggestions(conn: &Connection) -> Result<Vec<Suggestion>> {
     let mut groups: HashMap<String, BTreeSet<String>> = HashMap::new();
     let merchants: BTreeSet<&str> =
         txs.iter().map(|t| t.merchant.as_str()).filter(|m| !transfer_merchants.contains(m)).collect();
+    let significant = |m: &str| -> Vec<(&'static str, String)> {
+        words(m)
+            .into_iter()
+            .filter_map(|w| {
+                let alias = ALIASES.iter().find(|(a, _)| *a == w).map(|(_, canon)| *canon);
+                let ok = alias.is_some()
+                    || (w.chars().count() >= 4
+                        && !w.chars().any(|c| c.is_ascii_digit())
+                        && !STOP.contains(&w)
+                        && !locations.contains(w)
+                        && !holders.contains(w));
+                ok.then(|| (alias.unwrap_or(""), w.to_string()))
+            })
+            .take(2)
+            .collect()
+    };
+    // Enseigne présumée de chaque libellé, plus le mot suivant pour un paiement carte
+    // (ville vue une seule fois : « WATTR LIDL »).
+    let mut first_words: HashMap<&str, (String, Option<String>)> = HashMap::new();
+    for t in &txs {
+        let mut sig = significant(&t.merchant).into_iter().map(|(_, w)| w);
+        if let Some(first) = sig.next() {
+            let second = sig.next().filter(|_| card_merchants.contains(&t.merchant));
+            first_words.insert(t.merchant.as_str(), (first, second));
+        }
+    }
     for m in &merchants {
-        let brand = words(m).into_iter().find_map(|w| {
-            let alias = ALIASES.iter().find(|(a, _)| *a == w).map(|(_, canon)| *canon);
-            let ok = alias.is_some()
-                || (w.chars().count() >= 4
-                    && !w.chars().any(|c| c.is_ascii_digit())
-                    && !STOP.contains(&w)
-                    && !locations.contains(w)
-                    && !holders.contains(w));
-            ok.then(|| (alias.unwrap_or(w), w))
-        });
-        if let Some((canon, w)) = brand {
-            groups.entry(canon.to_string()).or_default().insert(w.to_string());
+        let n = if card_merchants.contains(*m) { 2 } else { 1 };
+        for (alias, w) in significant(m).into_iter().take(n) {
+            let canon = if alias.is_empty() { w.clone() } else { alias.to_string() };
+            groups.entry(canon).or_default().insert(w);
         }
     }
     let mut candidates: Vec<(Vec<String>, bool)> = groups.into_values().map(|p| (p.into_iter().collect(), true)).collect();
@@ -165,10 +190,10 @@ pub fn suggestions(conn: &Connection) -> Result<Vec<Suggestion>> {
 
     let mut out: Vec<(Suggestion, Vec<i64>)> = Vec::new();
     for (patterns, brand) in candidates {
-        if let Some(s) = evaluate(&txs, patterns, brand) {
-            if !dismissed.contains(&s.0.key) {
-                out.push(s);
-            }
+        if let Some(s) = evaluate(&txs, &first_words, patterns, brand)
+            && !dismissed.contains(&s.0.key)
+        {
+            out.push(s);
         }
     }
 
@@ -205,7 +230,13 @@ fn words(s: &str) -> Vec<&str> {
     s.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect()
 }
 
-fn evaluate(txs: &[Tx], patterns: Vec<String>, brand: bool) -> Option<(Suggestion, Vec<i64>)> {
+/// `first_words` : premier mot significatif de chaque libellé normalisé (l'enseigne présumée).
+fn evaluate(
+    txs: &[Tx],
+    first_words: &HashMap<&str, (String, Option<String>)>,
+    patterns: Vec<String>,
+    brand: bool,
+) -> Option<(Suggestion, Vec<i64>)> {
     let matched: Vec<&Tx> = txs.iter().filter(|t| patterns.iter().any(|p| t.text.contains(p.as_str()))).collect();
     if matched.len() < 2 {
         return None;
@@ -231,6 +262,21 @@ fn evaluate(txs: &[Tx], patterns: Vec<String>, brand: bool) -> Option<(Suggestio
     }
     if brand && merchant_counts.len() < 2 {
         return None; // un seul libellé : c'est le candidat « marchand » qui s'en charge
+    }
+    // L'enseigne doit être le premier mot de chaque libellé touché : « OPEN » ne doit pas
+    // regrouper « OPENFRONT.IO » et « TISSEO OPEN P ». Le 2e mot d'un paiement carte est toléré
+    // (ville non reconnue), mais exige alors une catégorie nettement majoritaire.
+    let starts = |w: &str| patterns.iter().any(|p| w.starts_with(p.as_str()));
+    let mut loose = false;
+    if brand {
+        for m in merchant_counts.keys() {
+            match first_words.get(m) {
+                None => {}
+                Some((first, _)) if starts(first) => {}
+                Some((_, Some(second))) if starts(second) => loose = true,
+                Some(_) => return None,
+            }
+        }
     }
 
     // Sens : quelques remboursements sont tolérés, pas un mélange dépenses / revenus (« OVH »).
@@ -260,7 +306,7 @@ fn evaluate(txs: &[Tx], patterns: Vec<String>, brand: bool) -> Option<(Suggestio
         .map(|(c, w)| (Some(*c), w / total))
         .unwrap_or((None, 0.0));
     // Trop dispersé (mot de lieu, intermédiaire de paiement…) : pas une enseigne.
-    if category_id.is_some() && (share < 0.5 || votes.len() > 3) {
+    if category_id.is_some() && (share < if loose { 0.75 } else { 0.5 } || votes.len() > 3) {
         return None;
     }
 
@@ -270,7 +316,7 @@ fn evaluate(txs: &[Tx], patterns: Vec<String>, brand: bool) -> Option<(Suggestio
     }
     let mut categories: Vec<CatCount> =
         cat_counts.into_iter().map(|(category_id, count)| CatCount { category_id, count }).collect();
-    categories.sort_by(|a, b| b.count.cmp(&a.count));
+    categories.sort_by_key(|c| std::cmp::Reverse(c.count));
 
     let recategorized = open.iter().filter(|t| t.category != category_id || category_id.is_none()).count();
     let months: HashSet<&str> = matched.iter().map(|t| t.month.as_str()).collect();
@@ -382,6 +428,10 @@ mod tests {
         assert!(!s.iter().any(|s| s.patterns.iter().any(|p| p == "EXPRESS" || p == "PURCHASE")), "{s:?}");
         assert!(s.iter().any(|s| s.patterns == vec!["STEAM"] && s.matches == 3));
         assert!(at_word_start("WL *STEAM PURCHASE", "STEAM"));
+        add(&c, 6, "2026-01-07", "openfront.io", -500, Some(15), Some("ai"));
+        add(&c, 7, "2026-02-07", "Tisseo Open P", -170, Some(6), Some("ai"));
+        add(&c, 8, "2026-03-07", "Open", -500, Some(15), Some("ai"));
+        assert!(!suggestions(&c).unwrap().iter().any(|s| s.patterns == vec!["OPEN"]));
         assert!(!at_word_start("SUBVENTION S CSE OVH", "E OVH"));
     }
 }
