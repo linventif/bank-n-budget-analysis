@@ -2,7 +2,7 @@ import { A, useNavigate, useSearchParams } from "@solidjs/router";
 import { createMemo, createResource, For, Match, Show, Switch } from "solid-js";
 import { api, type Budget, type CatAmount, type Portfolio, type Summary, type Tracking } from "../api";
 import { BarList } from "../components/charts/BarList";
-import { SegmentedBar } from "../components/charts/SegmentedBar";
+import { Donut } from "../components/charts/Donut";
 import { CumulativeLine } from "../components/charts/CumulativeLine";
 import { MonthlyColumns } from "../components/charts/MonthlyColumns";
 import { Sparkline } from "../components/charts/Sparkline";
@@ -428,6 +428,21 @@ function SpendingCard(props: { s: Summary; budget: Budget | null; tracking: Trac
   ] as const;
   const spent = () => props.s.by_category.filter((c) => c.amount_cents > 0);
   const total = () => props.s.totals.expenses_cents;
+  // Détail : 5 plus grosses catégories + « Autres » (couleurs de la palette dans l'ordre fixe).
+  const detailSlices = createMemo(() => {
+    const colors = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)", "var(--series-5)"];
+    const head = spent().slice(0, 5);
+    const tail = spent().slice(5);
+    const slices = head.map((c, i) => ({
+      key: String(c.category_id),
+      label: c.category_id != null ? store.categoryById().get(c.category_id)?.name ?? "?" : "Non classé",
+      value: c.amount_cents,
+      color: colors[i],
+      onClick: () => props.onOpen(c.category_id),
+    }));
+    if (tail.length) slices.push({ key: "autres", label: `Autres (${tail.length})`, value: tail.reduce((a, c) => a + c.amount_cents, 0), color: "var(--ink-muted)", onClick: () => {} });
+    return slices;
+  });
 
   // --- Prévu / non prévu : opérations rattachées aux postes de dépense du budget actif ---
   const planned = createMemo(() => {
@@ -511,7 +526,10 @@ function SpendingCard(props: { s: Summary; budget: Budget | null; tracking: Trac
       <Show when={spent().length} fallback={<Empty icon="lucide:receipt-text" title="Aucune dépense ce mois-ci" />}>
         <Switch>
           <Match when={store.categoryView() === "detail"}>
-            <CategoryBars rows={props.s.by_category} total={total()} onOpen={props.onOpen} />
+            <div class="flex flex-col gap-5">
+              <Donut ariaLabel="Répartition des dépenses par catégorie" centerLabel="Dépenses" slices={detailSlices()} />
+              <CategoryBars rows={props.s.by_category} total={total()} onOpen={props.onOpen} />
+            </div>
           </Match>
 
           <Match when={store.categoryView() === "budget"}>
@@ -525,9 +543,10 @@ function SpendingCard(props: { s: Summary; budget: Budget | null; tracking: Trac
             >
               {(pl) => (
                 <div class="flex flex-col gap-5">
-                  <SegmentedBar
+                  <Donut
                     ariaLabel="Dépenses prévues et non prévues"
-                    segments={[
+                    centerLabel="Dépenses"
+                    slices={[
                       { key: "p", label: "Prévu au budget", value: pl().sum, color: "var(--series-1)" },
                       { key: "n", label: "Non prévu", value: pl().rest, color: "var(--series-2)" },
                     ]}
@@ -560,9 +579,10 @@ function SpendingCard(props: { s: Summary; budget: Budget | null; tracking: Trac
 
           <Match when={store.categoryView() === "simple"}>
             <div class="flex flex-col gap-5">
-              <SegmentedBar
+              <Donut
                 ariaLabel="Dépenses vitales et plaisir"
-                segments={[
+                centerLabel="Dépenses"
+                slices={[
                   { key: "v", label: "Vital", value: natures().sum(natures().groups.vital), color: "var(--series-1)" },
                   { key: "p", label: "Plaisir", value: natures().sum(natures().groups.plaisir), color: "var(--series-2)" },
                   { key: "a", label: "Non défini", value: natures().sum(natures().groups.autre), color: "var(--ink-muted)" },
