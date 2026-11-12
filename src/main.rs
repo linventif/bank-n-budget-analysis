@@ -1,4 +1,5 @@
 mod ai;
+mod auth;
 mod budget;
 mod categorize;
 mod config;
@@ -27,6 +28,7 @@ pub struct AppState {
     /// Demande d'arrêt de la classification en cours.
     pub ai_cancel: AtomicBool,
     pub ai_progress: Mutex<categorize::AiProgress>,
+    pub auth: auth::Auth,
 }
 
 #[tokio::main]
@@ -75,6 +77,10 @@ async fn main() -> Result<()> {
     tracing::info!("redirect URL à déclarer chez Enable Banking : {}", cfg.redirect_url());
 
     let ai = if cfg.ai.enabled { Some(ai::Client::new(cfg.ai.clone())?) } else { None };
+    let auth = auth::Auth::new(&cfg.server.public_url)?;
+    if cfg.server.public_dashboard {
+        tracing::info!("tableau de bord public sur {} (connexion par passkey)", cfg.server.public_url);
+    }
 
     let state = Arc::new(AppState {
         cfg,
@@ -87,6 +93,7 @@ async fn main() -> Result<()> {
         classifying: AtomicBool::new(false),
         ai_cancel: AtomicBool::new(false),
         ai_progress: Mutex::new(categorize::AiProgress::default()),
+        auth,
     });
 
     let public = axum::serve(public_listener, web::public::router(state.clone())).with_graceful_shutdown(shutdown());

@@ -18,6 +18,21 @@ Navigateur local ─────────────────────
 - Deux écoutes séparées : le tunnel ne voit que les pages publiques et le retour d'autorisation.
   L'interface privée vérifie `Host` (anti DNS-rebinding) et `Origin` sur les requêtes non-GET.
 
+## Accès distant (passkeys)
+
+Avec `server.public_dashboard = true` (par défaut), le tableau de bord est aussi servi sur
+l'adresse publique, **derrière une connexion par passkey uniquement** (WebAuthn, `webauthn-rs`).
+
+- **En local** (`localhost:9890`) : aucune authentification. Page **Appareils** : générer un lien
+  d'ajout (QR code, usage unique, 10 min), renommer / supprimer les passkeys, fermer les sessions.
+- **À distance** : toute l'API exige une session ; seuls `/api/auth/*` (connexion, ajout),
+  `/terms`, `/privacy`, `/callback` et les fichiers de l'interface sont accessibles sans.
+- Session : jeton aléatoire 256 bits en cookie `__Host-bks` (HttpOnly, Secure, SameSite=Strict),
+  seul son SHA-256 est stocké ; 30 jours glissants. Hôte et Origin vérifiés, CSP stricte, HSTS.
+- Le jeton d'ajout voyage dans le fragment d'URL (`/enroll#t=…`) : ni journalisé par le tunnel ni
+  envoyé au serveur avec la page. La gestion des appareils n'existe que sur l'interface locale.
+- Pour couper l'accès distant au tableau de bord : `server.public_dashboard = false`.
+
 ## Mise en route
 
 ```bash

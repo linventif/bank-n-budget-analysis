@@ -1,6 +1,6 @@
 //! Interface privée (127.0.0.1, jamais derrière le tunnel) : API JSON + frontend compilé.
 
-use super::api;
+use super::{api, auth_api};
 use crate::AppState;
 use axum::Router;
 use axum::extract::{Request, State};
@@ -14,18 +14,23 @@ pub fn router(state: Arc<AppState>) -> Router {
     let port = state.cfg.server.local_addr.port();
     let allowed: Arc<Vec<String>> =
         Arc::new(["localhost", "127.0.0.1", "[::1]"].iter().map(|h| format!("{h}:{port}")).collect());
+    let api = api::router().merge(auth_api::local_router()).fallback(api::api_not_found);
+    let app = with_spa(Router::new().nest("/api", api), &state);
+    app.layer(middleware::from_fn_with_state(allowed, guard))
+        .layer(middleware::from_fn(auth_api::security_headers))
+        .with_state(state)
+}
 
+/// Frontend compilé en application monopage : toute route inconnue renvoie index.html.
+pub fn with_spa(app: Router<Arc<AppState>>, state: &AppState) -> Router<Arc<AppState>> {
     let web_dir = state.cfg.server.web_dir.clone();
     let index = web_dir.join("index.html");
-    let app = Router::new().nest("/api", api::router());
-    let app = if index.exists() {
-        // Application monopage : toute route inconnue renvoie index.html.
+    if index.exists() {
         app.fallback_service(ServeDir::new(&web_dir).fallback(ServeFile::new(&index)))
     } else {
         tracing::warn!("{} introuvable : lance `pnpm build` dans web/", index.display());
         app.fallback(missing_frontend)
-    };
-    app.layer(middleware::from_fn_with_state(allowed, guard)).with_state(state)
+    }
 }
 
 async fn missing_frontend() -> impl IntoResponse {

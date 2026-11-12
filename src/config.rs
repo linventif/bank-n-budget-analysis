@@ -68,6 +68,13 @@ pub struct Server {
     /// Frontend compilé (Solid) servi sur l'interface privée.
     #[serde(default = "default_web_dir")]
     pub web_dir: PathBuf,
+    /// Tableau de bord accessible via le tunnel, derrière une connexion par passkey.
+    #[serde(default = "default_true")]
+    pub public_dashboard: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -117,7 +124,9 @@ impl Config {
         let mut cfg: Config = toml::from_str(&raw).with_context(|| format!("{path} invalide"))?;
 
         cfg.server.public_url = cfg.server.public_url.trim_end_matches('/').to_string();
-        if !cfg.server.public_url.starts_with("https://") {
+        // http://localhost n'est admis que pour les tests (contexte sécurisé pour les navigateurs).
+        let local_http = cfg.server.public_url.starts_with("http://localhost:") || cfg.server.public_url.starts_with("http://127.0.0.1:");
+        if !cfg.server.public_url.starts_with("https://") && !local_http {
             bail!("server.public_url doit commencer par https://");
         }
         if !cfg.server.public_addr.ip().is_loopback() || !cfg.server.local_addr.ip().is_loopback() {

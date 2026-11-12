@@ -152,6 +152,30 @@ CREATE TABLE budget_amounts (
     PRIMARY KEY (line_id, period_id)
 );
 CREATE INDEX budget_lines_budget ON budget_lines (budget_id, position);
+"#, r#"
+-- Accès distant : passkeys (WebAuthn) et sessions (seul le hachage du jeton est stocké).
+CREATE TABLE app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+CREATE TABLE passkeys (
+    id            INTEGER PRIMARY KEY,
+    name          TEXT NOT NULL,
+    credential_id TEXT NOT NULL UNIQUE,
+    passkey       TEXT NOT NULL,          -- état webauthn-rs (clé publique, compteur), JSON
+    created_at    TEXT NOT NULL,
+    last_used_at  TEXT
+);
+CREATE TABLE auth_sessions (
+    id           INTEGER PRIMARY KEY,
+    token_hash   TEXT NOT NULL UNIQUE,    -- SHA-256 du jeton du cookie
+    passkey_id   INTEGER REFERENCES passkeys(id) ON DELETE CASCADE,
+    user_agent   TEXT,
+    ip           TEXT,
+    created_at   TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    expires_at   TEXT NOT NULL
+);
 "#];
 
 /// Catégories proposées au départ (toutes modifiables). Les descriptions guident l'IA.

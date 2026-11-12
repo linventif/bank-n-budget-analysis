@@ -8,7 +8,9 @@ anyhow = "1.0.104"
 axum = "0.8.9"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std", "serde"] }
 futures = { version = "0.3.34", default-features = false, features = ["std", "async-await"] }
+getrandom = "0.4.3"
 jsonwebtoken = { version = "11.1.0", features = ["aws_lc_rs"] }
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 regex = "1.13.1"
 reqwest = { version = "0.13.5", features = ["json", "query", "stream"] }
 rusqlite = { version = "0.42.0", features = ["bundled"] }
@@ -21,3 +23,4 @@ tower-http = { version = "0.7.1", features = ["fs"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 uuid = { version = "1.29.2", features = ["v4"] }
+webauthn-rs = "0.5.5"

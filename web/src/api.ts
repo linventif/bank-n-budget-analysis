@@ -255,6 +255,30 @@ export interface Bank {
 
 export class ApiError extends Error {}
 
+let onUnauthorized: (() => void) | undefined;
+export const setUnauthorizedHandler = (f: () => void) => (onUnauthorized = f);
+
+export interface Me {
+  authenticated: boolean;
+  local: boolean;
+  has_passkeys: boolean;
+  public_url: string;
+  public_dashboard?: boolean;
+}
+
+export interface Devices {
+  passkeys: { id: number; name: string; created_at: string; last_used_at: string | null }[];
+  sessions: {
+    id: number;
+    passkey_name: string | null;
+    user_agent: string | null;
+    ip: string | null;
+    created_at: string;
+    last_seen_at: string;
+    expires_at: string;
+  }[];
+}
+
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api${path}`, {
     method,
@@ -270,6 +294,8 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   }
   if (!res.ok) {
     const msg = (data as { error?: string } | null)?.error ?? (text || `HTTP ${res.status}`);
+    // Session expirée ou révoquée (accès distant) : retour à l'écran de connexion.
+    if (res.status === 401 && !path.startsWith("/auth/")) onUnauthorized?.();
     throw new ApiError(msg);
   }
   return data as T;
@@ -293,6 +319,19 @@ export interface TxFilters {
 }
 
 export const api = {
+  me: () => call<Me>("GET", "/auth/me"),
+  loginStart: () => call<{ id: string; options: { publicKey: Record<string, unknown> } }>("POST", "/auth/login/start", {}),
+  loginFinish: (id: string, credential: unknown) => call<{ ok: true }>("POST", "/auth/login/finish", { id, credential }),
+  registerStart: (token: string) =>
+    call<{ id: string; options: { publicKey: Record<string, unknown> } }>("POST", "/auth/register/start", { token }),
+  registerFinish: (id: string, token: string, name: string, credential: unknown) =>
+    call<{ ok: true }>("POST", "/auth/register/finish", { id, token, name, credential }),
+  logout: () => call<{ ok: true }>("POST", "/auth/logout", {}),
+  devices: () => call<Devices>("GET", "/devices"),
+  enrollLink: () => call<{ url: string; expires_at: string; qr_svg: string }>("POST", "/devices/enroll", {}),
+  renamePasskey: (id: number, name: string) => call<{ ok: true }>("PATCH", `/devices/passkeys/${id}`, { name }),
+  deletePasskey: (id: number) => call<{ ok: true }>("DELETE", `/devices/passkeys/${id}`),
+  revokeSession: (id: number) => call<{ ok: true }>("DELETE", `/devices/sessions/${id}`),
   status: () => call<Status>("GET", "/status"),
   accounts: () => call<Account[]>("GET", "/accounts"),
   summary: (month?: string) => call<Summary>("GET", `/summary${qs({ month })}`),

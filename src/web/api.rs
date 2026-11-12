@@ -39,6 +39,11 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(super::budget_api::router())
 }
 
+/// Chemin d'API inconnu : 404 JSON (et pas la page de l'application).
+pub async fn api_not_found() -> ApiError {
+    ApiError::not_found("ressource inconnue")
+}
+
 // ---------- Erreurs ----------
 
 pub struct ApiError {

@@ -1,10 +1,11 @@
 //! Routes exposées sur Internet via le tunnel Cloudflare.
-//! Rien ici ne doit afficher de donnée bancaire.
+//! Pages publiques (conditions, confidentialité, retour bancaire) ; si `public_dashboard`,
+//! le tableau de bord et l'API, ces derniers derrière une session ouverte par passkey.
 
 use super::html::{esc, page};
-use super::{AppError, HandlerResult};
+use super::{AppError, HandlerResult, auth_api};
 use crate::{AppState, db, sync};
-use axum::Router;
+use axum::{Router, middleware};
 use axum::extract::{Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
@@ -13,13 +14,27 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 pub fn router(state: Arc<AppState>) -> Router {
-    Router::new()
-        .route("/", get(home))
+    let base = Router::new()
         .route("/terms", get(terms))
         .route("/privacy", get(privacy))
         .route("/callback", get(callback))
         .route("/health", get(|| async { "ok" }))
-        .route("/robots.txt", get(|| async { ([(header::CONTENT_TYPE, "text/plain")], "User-agent: *\nDisallow: /\n") }))
+        .route("/robots.txt", get(|| async { ([(header::CONTENT_TYPE, "text/plain")], "User-agent: *\nDisallow: /\n") }));
+    let app = if state.cfg.server.public_dashboard {
+        // Données : session obligatoire ; /api/auth reste ouvert (connexion, enrôlement).
+        let data = super::api::router().route_layer(middleware::from_fn_with_state(state.clone(), auth_api::require_session));
+        let api = Router::new()
+            .nest("/auth", auth_api::public_router())
+            .merge(data)
+            .fallback(super::api::api_not_found);
+        let app = base.nest("/api", api);
+        super::local::with_spa(app, &state)
+    } else {
+        base.route("/", get(home))
+    };
+    app.layer(middleware::from_fn_with_state(state.clone(), auth_api::public_guard))
+        .layer(middleware::from_fn(auth_api::security_headers))
+        .layer(middleware::from_fn(auth_api::hsts))
         .with_state(state)
 }
 
@@ -152,8 +167,13 @@ async fn callback(State(app): State<Arc<AppState>>, Query(q): Query<CallbackQuer
 }
 
 fn back_link(app: &AppState) -> String {
+    let public = if app.cfg.server.public_dashboard {
+        "<a href=\"/\">Retour au tableau de bord</a> · ".to_string()
+    } else {
+        String::new()
+    };
     format!(
-        "<p><a href=\"http://localhost:{0}/\">Retour au tableau de bord (localhost:{0})</a></p>",
+        "<p>{public}<a href=\"http://localhost:{0}/\">Tableau de bord local (localhost:{0})</a></p>",
         app.cfg.server.local_addr.port()
     )
 }

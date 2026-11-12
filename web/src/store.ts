@@ -1,7 +1,7 @@
 // État global : version des données, catégories, statut (synchro / IA), notifications, thème.
 
 import { createMemo, createResource, createRoot, createSignal, onCleanup } from "solid-js";
-import { api, type Category, type Status } from "./api";
+import { api, setUnauthorizedHandler, type Category, type Me, type Status } from "./api";
 
 export type Toast = { id: number; kind: "info" | "success" | "error"; text: string; action?: { label: string; run: () => void } };
 
@@ -10,7 +10,25 @@ export const store = createRoot(() => {
   const [version, setVersion] = createSignal(0);
   const bump = () => setVersion((v) => v + 1);
 
-  const [categories, { mutate: mutateCategories }] = createResource(version, () => api.categories(), {
+  // --- Session : en local, toujours « connecté » ; à distance, passkey requise ---
+  const offline: Me = { authenticated: false, local: false, has_passkeys: false, public_url: "" };
+  const [me, { refetch: refetchMe, mutate: setMe }] = createResource(() => api.me().catch(() => offline));
+  setUnauthorizedHandler(() => setMe((m) => (m ? { ...m, authenticated: false } : offline)));
+  const signedIn = () => me()?.authenticated === true;
+  const afterLogin = async () => {
+    await refetchMe();
+    bump();
+    poll();
+  };
+  const logout = async () => {
+    try {
+      await api.logout();
+    } finally {
+      setMe((m) => (m ? { ...m, authenticated: false } : offline));
+    }
+  };
+
+  const [categories, { mutate: mutateCategories }] = createResource(() => (signedIn() ? { v: version() } : false), () => api.categories(), {
     initialValue: [] as Category[],
   });
   const categoryById = createMemo(() => new Map(categories().map((c) => [c.id, c])));
@@ -22,6 +40,11 @@ export const store = createRoot(() => {
   let lastLiveBump = 0;
   const poll = async () => {
     window.clearTimeout(timer);
+    // Pas de requête de données tant que la session n'est pas ouverte.
+    if (!signedIn()) {
+      timer = window.setTimeout(poll, 3000);
+      return;
+    }
     try {
       const s = await api.status();
       const busy = s.syncing || s.ai.progress.running;
@@ -103,6 +126,10 @@ export const store = createRoot(() => {
   const [dismissedRun, setDismissedRun] = createSignal<string | null>(null);
 
   return {
+    me,
+    signedIn,
+    afterLogin,
+    logout,
     hideTransfers,
     setHideTransfers,
     dismissedRun,

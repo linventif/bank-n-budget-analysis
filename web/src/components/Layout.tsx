@@ -53,7 +53,7 @@ export function Layout(props: { children?: JSX.Element }) {
             </div>
           </div>
           <ul class="menu w-full gap-0.5 px-3">
-            <For each={NAV}>
+            <For each={store.me()?.local ? [...NAV, { href: "/appareils", icon: "lucide:key-round", label: "Appareils" }] : NAV}>
               {(n) => (
                 <li>
                   <A href={n.href} end={n.end} activeClass="menu-active" onClick={() => setDrawer(false)} class="gap-3">
@@ -74,6 +74,11 @@ export function Layout(props: { children?: JSX.Element }) {
             <AiPill />
             <SyncButton />
             <ThemeSwitch />
+            <Show when={store.me() && !store.me()!.local}>
+              <button class="btn btn-ghost btn-sm w-full justify-start" onClick={() => store.logout()}>
+                <Ico icon="lucide:log-out" /> Se déconnecter
+              </button>
+            </Show>
           </div>
         </aside>
       </div>
