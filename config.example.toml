@@ -27,3 +27,8 @@ public_url = "https://bks.example.com"
 # model       = "Qwen/Qwen3-4B-AWQ"
 # batch_size  = 12                           # marchands par requête
 # concurrency = 2                            # requêtes simultanées
+
+# Bourse (page Bourse) : clés gratuites.
+# [market]
+# fred_key         = "…"   # https://fredaccount.stlouisfed.org/apikeys (S&P 500 et autres indices)
+# alphavantage_key = "…"   # https://www.alphavantage.co/support/#api-key (actions : OVH.PAR…)

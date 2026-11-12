@@ -101,6 +101,14 @@ Types de poste : dépense, aide / revenu (réduit le reste à charge), salaire, 
 - Création : vierge, depuis les dépenses détectées, ou copie. Le budget actif alimente le tableau de bord.
 - Un `data/budget-seed.json` (hors dépôt) est importé une fois au démarrage, puis renommé.
 
+## Bourse
+
+- **Compte-titres** (non exposé par l'API bancaire) : versements nets déduits des virements
+  « To / From investment account » (motifs réglables), valeur saisie à la main → plus-value.
+- **Valeurs suivies** : clôtures quotidiennes en cache local, rafraîchies toutes les 6 h.
+  Indices via l'API FRED (`[market] fred_key`, ex. SP500), actions via Alpha Vantage
+  (`[market] alphavantage_key`, ex. OVH.PAR) ; deux clés gratuites.
+
 ## Analyses
 
 Tableau de bord mensuel (dépenses vs moyenne à date, solde, taux d'épargne, rythme cumulé,

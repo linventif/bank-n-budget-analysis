@@ -264,6 +264,35 @@ export interface Status {
   counts: { transactions: number; uncategorized: number; to_review: number };
 }
 
+export interface MarketPoint {
+  day: string;
+  close: number;
+}
+
+export interface MarketWatch {
+  id: number;
+  provider: "fred" | "alphavantage";
+  symbol: string;
+  name: string;
+  currency: string;
+  fetched_at: string | null;
+  last_error: string | null;
+  last: MarketPoint | null;
+  previous: MarketPoint | null;
+  change_1y: number | null;
+}
+
+export interface Portfolio {
+  patterns: string;
+  deposits_cents: number;
+  withdrawals_cents: number;
+  net_invested_cents: number;
+  monthly: { month: string; deposits_cents: number; withdrawals_cents: number; cumulative_net_cents: number }[];
+  valuations: { day: string; value_cents: number }[];
+  latest: { day: string; value_cents: number } | null;
+  gain_cents: number | null;
+}
+
 export interface Bank {
   name: string;
   country: string;
@@ -391,6 +420,15 @@ export const api = {
   addLine: (budgetId: number, l: LineInput & { name: string; kind: LineKind }) => call<{ id: number }>("POST", `/budgets/${budgetId}/lines`, l),
   updateLine: (id: number, l: LineInput) => call<{ ok: true }>("PATCH", `/budget-lines/${id}`, l),
   deleteLine: (id: number) => call<{ ok: true }>("DELETE", `/budget-lines/${id}`),
+  market: () => call<{ items: MarketWatch[]; alphavantage_key: boolean; fred_key: boolean }>("GET", "/market"),
+  marketHistory: (id: number, since?: string) => call<MarketPoint[]>("GET", `/market/${id}/history${qs({ since })}`),
+  marketRefresh: (id: number) => call<{ points: number }>("POST", `/market/${id}/refresh`, {}),
+  marketAdd: (w: { provider: string; symbol: string; name: string; currency: string }) => call<{ id: number }>("POST", "/market", w),
+  marketRemove: (id: number) => call<{ ok: true }>("DELETE", `/market/${id}`),
+  portfolio: () => call<Portfolio>("GET", "/portfolio"),
+  portfolioPatterns: (patterns: string) => call<{ ok: true }>("PATCH", "/portfolio", { patterns }),
+  addValuation: (value_cents: number, day?: string) => call<{ ok: true }>("POST", "/portfolio/valuations", { value_cents, day }),
+  deleteValuation: (day: string) => call<{ ok: true }>("DELETE", `/portfolio/valuations/${day}`),
   banks: () => call<Bank[]>("GET", "/banks"),
   connect: (name: string, country: string) => call<{ url: string }>("POST", "/connect", { name, country }),
 };

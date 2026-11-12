@@ -1,6 +1,6 @@
 import { A, useNavigate, useSearchParams } from "@solidjs/router";
 import { createMemo, createResource, For, Show } from "solid-js";
-import { api, type Budget, type CatAmount, type Summary, type Tracking } from "../api";
+import { api, type Budget, type CatAmount, type Portfolio, type Summary, type Tracking } from "../api";
 import { BarList } from "../components/charts/BarList";
 import { CumulativeLine } from "../components/charts/CumulativeLine";
 import { MonthlyColumns } from "../components/charts/MonthlyColumns";
@@ -17,6 +17,7 @@ export default function Dashboard() {
     ({ month }) => api.summary(month),
   );
   const [recurring] = createResource(store.version, () => api.recurring());
+  const [portfolio] = createResource(store.version, () => api.portfolio().catch(() => null));
   const recurringExpenses = () => (recurring.latest?.items ?? []).filter((r) => r.kind === "expense" && r.status !== "stopped");
   // Budget actif : suivi du mois affiché.
   const [activeBudget] = createResource(store.version, async () => (await api.budgets()).find((b) => b.is_active) ?? null);
@@ -88,7 +89,7 @@ export default function Dashboard() {
         >
           <div class={`flex flex-col gap-5 ${summary.loading ? "refetching" : ""}`}>
             <ReviewBanner />
-            <Kpis s={s()!} />
+            <Kpis s={s()!} portfolio={portfolio.latest && portfolio.latest.net_invested_cents > 0 ? portfolio.latest : null} />
 
             <div class="grid gap-5 lg:grid-cols-5">
               <Card
@@ -247,7 +248,7 @@ function ReviewBanner() {
   );
 }
 
-function Kpis(props: { s: Summary }) {
+function Kpis(props: { s: Summary; portfolio?: Portfolio | null }) {
   const s = () => props.s;
   const net = () => s().totals.income_cents - s().totals.expenses_cents;
   // Mois en cours : comparer au cumul moyen à la même date, pas au mois complet.
@@ -302,6 +303,12 @@ function Kpis(props: { s: Summary }) {
         </div>
         <div class="text-3xl leading-none font-semibold">{money0(s().balance_cents)}</div>
         <span class="text-muted text-sm">solde actuel, tous comptes</span>
+        <Show when={props.portfolio}>
+          <span class="text-ink-2 text-sm">
+            + {money0(props.portfolio!.latest?.value_cents ?? props.portfolio!.net_invested_cents)} en compte-titres
+            <span class="text-muted">{props.portfolio!.latest ? "" : " (net investi)"}</span>
+          </span>
+        </Show>
       </A>
     </div>
   );

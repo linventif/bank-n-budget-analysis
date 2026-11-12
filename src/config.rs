@@ -13,6 +13,16 @@ pub struct Config {
     pub enable_banking: Option<EnableBanking>,
     #[serde(default)]
     pub ai: Ai,
+    #[serde(default)]
+    pub market: Market,
+}
+
+/// Cotations : FRED (sans clé) pour les indices, Alpha Vantage (clé gratuite) pour les actions.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct Market {
+    pub alphavantage_key: Option<String>,
+    /// Clé de l'API officielle FRED (gratuite) : https://fred.stlouisfed.org/docs/api/api_key.html
+    pub fred_key: Option<String>,
 }
 
 /// Modèle local (vLLM ou toute API compatible OpenAI, ou Ollama) pour classer les opérations.

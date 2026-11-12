@@ -187,6 +187,34 @@ CREATE TABLE budget_calendar (
 "#, r#"
 -- Compte disparu côté banque (pocket supprimée…) : plus synchronisé, historique conservé.
 ALTER TABLE accounts ADD COLUMN closed_at TEXT;
+"#, r#"
+-- Bourse : valeurs suivies et historique de clôtures (cache local des cotations).
+CREATE TABLE market_watch (
+    id         INTEGER PRIMARY KEY,
+    provider   TEXT NOT NULL CHECK (provider IN ('fred', 'alphavantage')),
+    symbol     TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    currency   TEXT NOT NULL DEFAULT 'EUR',
+    position   INTEGER NOT NULL DEFAULT 0,
+    fetched_at TEXT,
+    last_error TEXT,
+    UNIQUE (provider, symbol)
+);
+CREATE TABLE market_prices (
+    watch_id INTEGER NOT NULL REFERENCES market_watch(id) ON DELETE CASCADE,
+    day      TEXT NOT NULL,
+    close    REAL NOT NULL,
+    PRIMARY KEY (watch_id, day)
+);
+INSERT INTO market_watch (provider, symbol, name, currency, position) VALUES
+    ('fred', 'SP500', 'S&P 500', 'USD', 0),
+    ('alphavantage', 'OVH.PAR', 'OVHcloud', 'EUR', 1);
+
+-- Compte-titres (non exposé par l'API bancaire) : valorisations saisies à la main.
+CREATE TABLE portfolio_valuations (
+    day         TEXT PRIMARY KEY,
+    value_cents INTEGER NOT NULL
+);
 "#];
 
 /// Catégories proposées au départ (toutes modifiables). Les descriptions guident l'IA.

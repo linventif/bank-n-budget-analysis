@@ -3,6 +3,7 @@ pub mod auth_api;
 pub mod budget_api;
 pub mod html;
 pub mod local;
+pub mod market_api;
 pub mod public;
 
 use axum::http::StatusCode;

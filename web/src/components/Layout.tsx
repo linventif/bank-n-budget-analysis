@@ -11,6 +11,7 @@ const NAV = [
   { href: "/budget", icon: "lucide:calculator", label: "Budget" },
   { href: "/operations", icon: "lucide:list", label: "Opérations" },
   { href: "/tendances", icon: "lucide:chart-column", label: "Tendances" },
+  { href: "/bourse", icon: "lucide:chart-candlestick", label: "Bourse" },
   { href: "/categories", icon: "lucide:tags", label: "Catégories" },
   { href: "/comptes", icon: "lucide:wallet", label: "Comptes & IA" },
 ];

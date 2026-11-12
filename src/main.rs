@@ -5,6 +5,7 @@ mod categorize;
 mod config;
 mod db;
 mod eb;
+mod market;
 mod merchant;
 mod suggest;
 mod sync;
@@ -97,6 +98,7 @@ async fn main() -> Result<()> {
         auth,
     });
 
+    market::schedule(state.clone());
     if let Some(eb) = &state.cfg.enable_banking {
         sync::schedule(state.clone(), eb.auto_sync_hours);
     }

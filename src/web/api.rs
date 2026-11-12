@@ -40,6 +40,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/banks", get(banks))
         .route("/connect", post(connect))
         .merge(super::budget_api::router())
+        .merge(super::market_api::router())
 }
 
 /// Chemin d'API inconnu : 404 JSON (et pas la page de l'application).

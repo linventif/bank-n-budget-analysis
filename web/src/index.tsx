@@ -17,6 +17,7 @@ addCollection(lucide);
 const Transactions = lazy(() => import("./pages/Transactions"));
 const Trends = lazy(() => import("./pages/Trends"));
 const BudgetPage = lazy(() => import("./pages/Budget"));
+const Bourse = lazy(() => import("./pages/Bourse"));
 const Categories = lazy(() => import("./pages/Categories"));
 const Accounts = lazy(() => import("./pages/Accounts"));
 const Devices = lazy(() => import("./pages/Devices"));
@@ -51,6 +52,7 @@ render(
       <Route path="/operations" component={Transactions} />
       <Route path="/budget" component={BudgetPage} />
       <Route path="/tendances" component={Trends} />
+      <Route path="/bourse" component={Bourse} />
       <Route path="/categories" component={Categories} />
       <Route path="/comptes" component={Accounts} />
       <Route path="/appareils" component={Devices} />
