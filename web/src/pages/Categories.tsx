@@ -106,6 +106,23 @@ function CategoryRow(props: { c: Category; onSave: (p: Partial<Category>) => voi
         />
       </div>
       <div class="flex items-center gap-1">
+        <Show when={c().kind === "expense"}>
+          <div class="join" role="radiogroup" aria-label="Nature">
+            <For each={[{ v: "vital", l: "Vital" }, { v: "plaisir", l: "Plaisir" }] as const}>
+              {(n) => (
+                <button
+                  role="radio"
+                  aria-checked={c().nature === n.v}
+                  class={`btn btn-xs join-item ${c().nature === n.v ? "btn-active" : "btn-ghost"}`}
+                  title="Vue « Simplifié » du tableau de bord"
+                  onClick={() => props.onSave({ nature: c().nature === n.v ? null : n.v })}
+                >
+                  {n.l}
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
         <Show
           when={confirm()}
           fallback={<IconButton icon="lucide:trash-2" label={`Supprimer ${c().name}`} class="text-muted" onClick={() => setConfirm(true)} />}

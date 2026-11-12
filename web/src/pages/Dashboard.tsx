@@ -1,7 +1,8 @@
 import { A, useNavigate, useSearchParams } from "@solidjs/router";
-import { createMemo, createResource, For, Show } from "solid-js";
+import { createMemo, createResource, For, Match, Show, Switch } from "solid-js";
 import { api, type Budget, type CatAmount, type Portfolio, type Summary, type Tracking } from "../api";
 import { BarList } from "../components/charts/BarList";
+import { SegmentedBar } from "../components/charts/SegmentedBar";
 import { CumulativeLine } from "../components/charts/CumulativeLine";
 import { MonthlyColumns } from "../components/charts/MonthlyColumns";
 import { Sparkline } from "../components/charts/Sparkline";
@@ -108,15 +109,7 @@ export default function Dashboard() {
             </div>
 
             <div class="grid gap-5 lg:grid-cols-5">
-              <Card
-                class="lg:col-span-3"
-                title="Dépenses par catégorie"
-                subtitle={`${money0(s()!.totals.expenses_cents)} ce mois-ci`}
-              >
-                <Show when={s()!.by_category.some((c) => c.amount_cents > 0)} fallback={<Empty icon="lucide:receipt-text" title="Aucune dépense ce mois-ci" />}>
-                  <CategoryBars rows={s()!.by_category} total={s()!.totals.expenses_cents} onOpen={openCategory} />
-                </Show>
-              </Card>
+              <SpendingCard s={s()!} budget={activeBudget.latest ?? null} tracking={budgetTrack.latest ?? null} onOpen={openCategory} />
               <Card class="lg:col-span-2" title="Où part l'argent" subtitle="Marchands les plus coûteux du mois">
                 <Show when={s()!.top_merchants.length} fallback={<Empty icon="lucide:store" title="Aucun marchand ce mois-ci" />}>
                   <ul class="flex flex-col">
@@ -421,6 +414,179 @@ function Budgets(props: { budget: Budget | null; tracking: Tracking | null; clas
             }}
           </For>
         </ul>
+      </Show>
+    </Card>
+  );
+}
+
+/** Dépenses du mois selon trois vues : par catégorie, prévu / non prévu (budget), vital / plaisir. */
+function SpendingCard(props: { s: Summary; budget: Budget | null; tracking: Tracking | null; onOpen: (id: number | null) => void }) {
+  const views = [
+    { v: "detail", label: "Détail" },
+    { v: "budget", label: "Budget" },
+    { v: "simple", label: "Simplifié" },
+  ] as const;
+  const spent = () => props.s.by_category.filter((c) => c.amount_cents > 0);
+  const total = () => props.s.totals.expenses_cents;
+
+  // --- Prévu / non prévu : opérations rattachées aux postes de dépense du budget actif ---
+  const planned = createMemo(() => {
+    const b = props.budget;
+    const t = props.tracking;
+    if (!b || !t) return null;
+    const byLine = new Map(t.lines.map((x) => [x.line_id, x]));
+    const lines = b.lines
+      .filter((l) => l.kind === "expense")
+      .map((l) => ({ line: l, actual: byLine.get(l.id)?.actual_cents ?? 0, planned: byLine.get(l.id)?.planned_cents ?? 0 }))
+      .filter((x) => x.actual > 0)
+      .sort((a, b) => b.actual - a.actual);
+    const sum = lines.reduce((a, x) => a + x.actual, 0);
+    return { lines, sum, rest: Math.max(t.actual_expense_cents - sum, 0), unbudgeted: t.unbudgeted.filter((c) => c.actual_cents > 0) };
+  });
+
+  // --- Vital / plaisir : nature des catégories ---
+  const natures = createMemo(() => {
+    const groups = { vital: [] as CatAmount[], plaisir: [] as CatAmount[], autre: [] as CatAmount[] };
+    for (const c of spent()) {
+      const n = c.category_id != null ? store.categoryById().get(c.category_id)?.nature : null;
+      groups[n === "vital" ? "vital" : n === "plaisir" ? "plaisir" : "autre"].push(c);
+    }
+    const sum = (xs: CatAmount[]) => xs.reduce((a, c) => a + c.amount_cents, 0);
+    const avg = (xs: CatAmount[]) => xs.reduce((a, c) => a + c.avg_cents, 0);
+    return { groups, sum, avg };
+  });
+
+  const CatList = (p: { rows: CatAmount[] }) => (
+    <ul class="flex flex-col">
+      <For each={p.rows.slice(0, 6)}>
+        {(c) => {
+          const cat = () => (c.category_id != null ? store.categoryById().get(c.category_id) : null);
+          return (
+            <li>
+              <button class="hover:bg-base-200 flex w-full items-center gap-2.5 rounded-lg px-1.5 py-1 text-left" onClick={() => props.onOpen(c.category_id)}>
+                <CategoryIcon category={cat()} size="sm" />
+                <span class="min-w-0 flex-1 truncate text-sm">{cat()?.name ?? "Non classé"}</span>
+                <span class="num text-sm font-semibold">{money0(c.amount_cents)}</span>
+              </button>
+            </li>
+          );
+        }}
+      </For>
+      <Show when={p.rows.length > 6}>
+        <li class="text-muted px-1.5 py-1 text-xs">
+          + {p.rows.length - 6} autres · {money0(p.rows.slice(6).reduce((a, c) => a + c.amount_cents, 0))}
+        </li>
+      </Show>
+    </ul>
+  );
+
+  const GroupHead = (p: { color: string; label: string; value: number; avg?: number }) => (
+    <div class="mb-1 flex items-baseline gap-2">
+      <span class="size-2.5 shrink-0 rounded-[3px]" style={{ background: p.color }} />
+      <span class="text-sm font-semibold">{p.label}</span>
+      <span class="num ml-auto text-sm font-semibold">{money0(p.value)}</span>
+      <Show when={p.avg}>
+        <span class="text-muted num text-xs">moy. {money0(p.avg!)}</span>
+      </Show>
+    </div>
+  );
+
+  return (
+    <Card
+      class="lg:col-span-3"
+      title="Dépenses du mois"
+      subtitle={`${money0(total())} au total`}
+      actions={
+        <div class="tabs tabs-box tabs-xs" role="radiogroup" aria-label="Vue des dépenses">
+          <For each={views}>
+            {(v) => (
+              <button role="radio" aria-checked={store.categoryView() === v.v} class={`tab ${store.categoryView() === v.v ? "tab-active" : ""}`} onClick={() => store.setCategoryView(v.v)}>
+                {v.label}
+              </button>
+            )}
+          </For>
+        </div>
+      }
+    >
+      <Show when={spent().length} fallback={<Empty icon="lucide:receipt-text" title="Aucune dépense ce mois-ci" />}>
+        <Switch>
+          <Match when={store.categoryView() === "detail"}>
+            <CategoryBars rows={props.s.by_category} total={total()} onOpen={props.onOpen} />
+          </Match>
+
+          <Match when={store.categoryView() === "budget"}>
+            <Show
+              when={planned()}
+              fallback={
+                <Empty icon="lucide:calculator" title="Pas de budget actif">
+                  Crée ton budget dans <A href="/budget" class="link">Budget</A> pour distinguer le prévu du non prévu.
+                </Empty>
+              }
+            >
+              {(pl) => (
+                <div class="flex flex-col gap-5">
+                  <SegmentedBar
+                    ariaLabel="Dépenses prévues et non prévues"
+                    segments={[
+                      { key: "p", label: "Prévu au budget", value: pl().sum, color: "var(--series-1)" },
+                      { key: "n", label: "Non prévu", value: pl().rest, color: "var(--series-2)" },
+                    ]}
+                  />
+                  <div class="grid gap-5 sm:grid-cols-2">
+                    <div>
+                      <GroupHead color="var(--series-1)" label="Prévu" value={pl().sum} />
+                      <ul class="flex flex-col">
+                        <For each={pl().lines.slice(0, 6)}>
+                          {(x) => (
+                            <li class="flex items-center gap-2.5 px-1.5 py-1">
+                              <CategoryIcon category={x.line.category_id != null ? store.categoryById().get(x.line.category_id) : null} size="sm" />
+                              <span class="min-w-0 flex-1 truncate text-sm">{x.line.name}</span>
+                              <span class="num text-sm font-semibold">{money0(x.actual)}</span>
+                              <span class="text-muted num text-xs">/ {money0(x.planned)}</span>
+                            </li>
+                          )}
+                        </For>
+                      </ul>
+                    </div>
+                    <div>
+                      <GroupHead color="var(--series-2)" label="Non prévu" value={pl().rest} />
+                      <CatList rows={pl().unbudgeted.map((c) => ({ category_id: c.category_id, amount_cents: c.actual_cents, count: c.count, prev_cents: 0, avg_cents: c.detected_cents, budget_cents: null }))} />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </Show>
+          </Match>
+
+          <Match when={store.categoryView() === "simple"}>
+            <div class="flex flex-col gap-5">
+              <SegmentedBar
+                ariaLabel="Dépenses vitales et plaisir"
+                segments={[
+                  { key: "v", label: "Vital", value: natures().sum(natures().groups.vital), color: "var(--series-1)" },
+                  { key: "p", label: "Plaisir", value: natures().sum(natures().groups.plaisir), color: "var(--series-2)" },
+                  { key: "a", label: "Non défini", value: natures().sum(natures().groups.autre), color: "var(--ink-muted)" },
+                ]}
+              />
+              <div class="grid gap-5 sm:grid-cols-2">
+                <div>
+                  <GroupHead color="var(--series-1)" label="Vital" value={natures().sum(natures().groups.vital)} avg={natures().avg(natures().groups.vital)} />
+                  <CatList rows={natures().groups.vital} />
+                </div>
+                <div>
+                  <GroupHead color="var(--series-2)" label="Plaisir" value={natures().sum(natures().groups.plaisir)} avg={natures().avg(natures().groups.plaisir)} />
+                  <CatList rows={natures().groups.plaisir} />
+                </div>
+              </div>
+              <Show when={natures().groups.autre.length}>
+                <p class="text-muted text-xs">
+                  {money0(natures().sum(natures().groups.autre))} sans nature (non classé ou catégorie sans nature) · à régler dans{" "}
+                  <A href="/categories" class="link">Catégories</A>.
+                </p>
+              </Show>
+            </div>
+          </Match>
+        </Switch>
       </Show>
     </Card>
   );

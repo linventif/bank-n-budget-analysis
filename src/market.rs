@@ -229,6 +229,8 @@ pub struct PortfolioMonth {
 pub struct Valuation {
     pub day: String,
     pub value_cents: i64,
+    /// Plus-value affichée par le courtier (fait foi si renseignée).
+    pub gain_cents: Option<i64>,
 }
 
 pub fn patterns(conn: &Connection) -> Result<String> {
@@ -266,11 +268,14 @@ pub fn portfolio(conn: &Connection) -> Result<Portfolio> {
         net_by_day.push((day.clone(), cum));
     }
     let valuations: Vec<Valuation> = conn
-        .prepare("SELECT day, value_cents FROM portfolio_valuations ORDER BY day")?
-        .query_map([], |r| Ok(Valuation { day: r.get(0)?, value_cents: r.get(1)? }))?
+        .prepare("SELECT day, value_cents, gain_cents FROM portfolio_valuations ORDER BY day")?
+        .query_map([], |r| Ok(Valuation { day: r.get(0)?, value_cents: r.get(1)?, gain_cents: r.get(2)? }))?
         .collect::<Result<_, _>>()?;
     let latest = valuations.last().cloned();
     let gain_cents = latest.as_ref().map(|v| {
+        if let Some(g) = v.gain_cents {
+            return g;
+        }
         let invested = net_by_day.iter().rev().find(|(d, _)| d.as_str() <= v.day.as_str()).map_or(0, |(_, n)| *n);
         v.value_cents - invested
     });

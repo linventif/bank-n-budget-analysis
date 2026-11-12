@@ -13,6 +13,7 @@ export interface Category {
   position: number;
   role: string | null;
   tx_count: number;
+  nature: "vital" | "plaisir" | null;
 }
 
 export interface Account {
@@ -288,8 +289,8 @@ export interface Portfolio {
   withdrawals_cents: number;
   net_invested_cents: number;
   monthly: { month: string; deposits_cents: number; withdrawals_cents: number; cumulative_net_cents: number }[];
-  valuations: { day: string; value_cents: number }[];
-  latest: { day: string; value_cents: number } | null;
+  valuations: { day: string; value_cents: number; gain_cents: number | null }[];
+  latest: { day: string; value_cents: number; gain_cents: number | null } | null;
   gain_cents: number | null;
 }
 
@@ -427,7 +428,8 @@ export const api = {
   marketRemove: (id: number) => call<{ ok: true }>("DELETE", `/market/${id}`),
   portfolio: () => call<Portfolio>("GET", "/portfolio"),
   portfolioPatterns: (patterns: string) => call<{ ok: true }>("PATCH", "/portfolio", { patterns }),
-  addValuation: (value_cents: number, day?: string) => call<{ ok: true }>("POST", "/portfolio/valuations", { value_cents, day }),
+  addValuation: (value_cents: number, gain_cents?: number | null, day?: string) =>
+    call<{ ok: true }>("POST", "/portfolio/valuations", { value_cents, gain_cents, day }),
   deleteValuation: (day: string) => call<{ ok: true }>("DELETE", `/portfolio/valuations/${day}`),
   banks: () => call<Bank[]>("GET", "/banks"),
   connect: (name: string, country: string) => call<{ url: string }>("POST", "/connect", { name, country }),

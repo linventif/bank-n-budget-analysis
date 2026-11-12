@@ -43,6 +43,7 @@ export default function Bourse() {
 function PortfolioCard() {
   const [p, { refetch }] = createResource(store.version, () => api.portfolio());
   const [value, setValue] = createSignal("");
+  const [gain, setGain] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [settings, setSettings] = createSignal(false);
   const save = async (e: Event) => {
@@ -51,8 +52,10 @@ function PortfolioCard() {
     if (cents == null) return;
     setBusy(true);
     try {
-      await api.addValuation(cents);
+      const g = gain().trim() ? parseEuros(gain().replace(/^\+/, "")) : null;
+      await api.addValuation(cents, g ?? null);
       setValue("");
+      setGain("");
       store.toast("Valeur du compte-titres enregistrée", "success");
       refetch();
     } catch (err) {
@@ -116,7 +119,16 @@ function PortfolioCard() {
                     {(pf().gain_cents! >= 0 ? "+" : "−") + money0(Math.abs(pf().gain_cents!))}
                   </div>
                   <div class="text-muted text-xs">
-                    {pf().net_invested_cents > 0 ? `${percent(pf().gain_cents! / pf().net_invested_cents)} du net investi` : ""}
+                    <Show
+                      when={pf().latest?.gain_cents != null}
+                      fallback={pf().net_invested_cents > 0 ? `${percent(pf().gain_cents! / pf().net_invested_cents)} du net investi (estimé)` : ""}
+                    >
+                      {(() => {
+                        const g = pf().latest!.gain_cents!;
+                        const cost = pf().latest!.value_cents - g;
+                        return `${g >= 0 ? "+" : "−"}${Math.abs((g / cost) * 100).toLocaleString("fr-FR", { maximumFractionDigits: 2 })} % · selon Revolut`;
+                      })()}
+                    </Show>
                   </div>
                 </Show>
               </div>
@@ -128,10 +140,15 @@ function PortfolioCard() {
                 <input inputmode="decimal" placeholder="ex. 3 250,40" value={value()} onInput={(e) => setValue(e.currentTarget.value)} />
                 <span class="text-muted text-xs">€</span>
               </label>
+              <label class="input input-sm w-52">
+                <span class="text-muted text-xs">Plus-value</span>
+                <input inputmode="decimal" placeholder="ex. 142 ou -30" value={gain()} onInput={(e) => setGain(e.currentTarget.value)} />
+                <span class="text-muted text-xs">€</span>
+              </label>
               <button class="btn btn-sm btn-primary" disabled={busy() || parseEuros(value()) == null}>
                 Enregistrer
               </button>
-              <span class="text-muted text-xs">Le montant affiché dans Revolut → Investir ; une saisie par jour.</span>
+              <span class="text-muted text-xs">Valeur et plus-value affichées dans Revolut → Investir (la plus-value de Revolut fait foi).</span>
             </form>
 
             <Show when={series().length > 1}>

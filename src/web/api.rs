@@ -718,6 +718,7 @@ struct Category {
     position: i64,
     role: Option<String>,
     tx_count: i64,
+    nature: Option<String>,
 }
 
 async fn list_categories(State(app): State<Arc<AppState>>) -> ApiResult<Vec<Category>> {
@@ -725,7 +726,7 @@ async fn list_categories(State(app): State<Arc<AppState>>) -> ApiResult<Vec<Cate
     let rows = conn
         .prepare(
             "SELECT c.id, c.name, c.icon, c.kind, c.description, c.budget_cents, c.position, c.role,
-                    (SELECT COUNT(*) FROM ledger l WHERE l.category_id = c.id)
+                    (SELECT COUNT(*) FROM ledger l WHERE l.category_id = c.id), c.nature
              FROM categories c ORDER BY CASE c.kind WHEN 'expense' THEN 0 WHEN 'income' THEN 1 ELSE 2 END, c.position, c.name",
         )?
         .query_map([], |r| {
@@ -739,6 +740,7 @@ async fn list_categories(State(app): State<Arc<AppState>>) -> ApiResult<Vec<Cate
                 position: r.get(6)?,
                 role: r.get(7)?,
                 tx_count: r.get(8)?,
+                nature: r.get(9)?,
             })
         })?
         .collect::<Result<_, _>>()?;
@@ -754,6 +756,13 @@ struct CategoryInput {
     /// Absent = inchangé, null = pas de budget.
     #[serde(default, deserialize_with = "nullable")]
     budget_cents: Option<Option<i64>>,
+    /// Absent = inchangé, null = non définie.
+    #[serde(default, deserialize_with = "nullable_str")]
+    nature: Option<Option<String>>,
+}
+
+fn nullable_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<String>>, D::Error> {
+    Ok(Some(Option::<String>::deserialize(d)?))
 }
 
 fn nullable<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<i64>>, D::Error> {
@@ -809,8 +818,16 @@ async fn update_category(
     Json(b): Json<CategoryInput>,
 ) -> ApiResult<Value> {
     validate_category(b.name.as_deref(), b.icon.as_deref(), b.kind.as_deref())?;
+    if let Some(Some(n)) = &b.nature {
+        if n != "vital" && n != "plaisir" {
+            return Err(ApiError::bad("nature invalide (vital ou plaisir)"));
+        }
+    }
     let conn = app.db.lock().unwrap();
     ensure_category(&conn, id)?;
+    if let Some(n) = &b.nature {
+        conn.execute("UPDATE categories SET nature = ?1 WHERE id = ?2", params![n, id])?;
+    }
     let res = conn.execute(
         "UPDATE categories SET
             name = COALESCE(?1, name), icon = COALESCE(?2, icon), kind = COALESCE(?3, kind),

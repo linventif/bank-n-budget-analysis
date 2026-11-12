@@ -110,6 +110,7 @@ async fn set_patterns(State(app): State<Arc<AppState>>, Json(b): Json<Patterns>)
 struct ValuationInput {
     day: Option<String>,
     value_cents: i64,
+    gain_cents: Option<i64>,
 }
 
 async fn add_valuation(State(app): State<Arc<AppState>>, Json(b): Json<ValuationInput>) -> ApiResult<Value> {
@@ -118,8 +119,8 @@ async fn add_valuation(State(app): State<Arc<AppState>>, Json(b): Json<Valuation
         return Err(ApiError::bad("date ou montant invalide"));
     }
     app.db.lock().unwrap().execute(
-        "INSERT OR REPLACE INTO portfolio_valuations (day, value_cents) VALUES (?1, ?2)",
-        params![day, b.value_cents],
+        "INSERT OR REPLACE INTO portfolio_valuations (day, value_cents, gain_cents) VALUES (?1, ?2, ?3)",
+        params![day, b.value_cents, b.gain_cents],
     )?;
     Ok(Json(json!({ "ok": true })))
 }

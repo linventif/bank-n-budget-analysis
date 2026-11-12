@@ -122,10 +122,32 @@ export const store = createRoot(() => {
     }
   };
 
+  // Vue des dépenses : détail par catégorie, prévu / non prévu, vital / plaisir (préférence locale).
+  type CategoryView = "detail" | "budget" | "simple";
+  const readView = (): CategoryView => {
+    try {
+      const v = localStorage.getItem("bks-category-view");
+      return v === "budget" || v === "simple" ? v : "detail";
+    } catch {
+      return "detail";
+    }
+  };
+  const [categoryView, setCategoryViewSignal] = createSignal<CategoryView>(readView());
+  const setCategoryView = (v: CategoryView) => {
+    setCategoryViewSignal(v);
+    try {
+      localStorage.setItem("bks-category-view", v);
+    } catch {
+      /* préférence non mémorisée */
+    }
+  };
+
   // Panneau « classification terminée » masqué par l'utilisateur (identifié par sa date de fin).
   const [dismissedRun, setDismissedRun] = createSignal<string | null>(null);
 
   return {
+    categoryView,
+    setCategoryView,
     me,
     signedIn,
     afterLogin,

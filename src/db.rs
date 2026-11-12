@@ -215,6 +215,17 @@ CREATE TABLE portfolio_valuations (
     day         TEXT PRIMARY KEY,
     value_cents INTEGER NOT NULL
 );
+"#, r#"
+-- Nature d'une catégorie de dépense (vue simplifiée) et plus-value indiquée par le courtier.
+ALTER TABLE categories ADD COLUMN nature TEXT CHECK (nature IN ('vital', 'plaisir'));
+UPDATE categories SET nature = 'vital' WHERE kind = 'expense' AND name IN (
+    'Courses', 'Logement', 'Énergie & eau', 'Téléphone & internet', 'Transports', 'Carburant & péages',
+    'Véhicule', 'Santé', 'Assurances', 'Impôts & taxes', 'Frais bancaires', 'Éducation',
+    'Crédits & paiements fractionnés', 'Animaux');
+UPDATE categories SET nature = 'plaisir' WHERE kind = 'expense' AND name IN (
+    'Restaurants & bars', 'Voyages', 'Abonnements & services en ligne', 'Shopping', 'Maison & bricolage',
+    'Sport', 'Loisirs & sorties', 'Beauté & soins', 'Cadeaux & dons', 'Envois à des proches');
+ALTER TABLE portfolio_valuations ADD COLUMN gain_cents INTEGER;
 "#];
 
 /// Catégories proposées au départ (toutes modifiables). Les descriptions guident l'IA.
