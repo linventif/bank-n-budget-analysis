@@ -243,6 +243,18 @@ CREATE VIEW ledger AS SELECT * FROM ledger_all WHERE excluded = 0;
 
 -- Périmètre d'un poste : vie courante (permanent) ou alternance (temporaire).
 ALTER TABLE budget_lines ADD COLUMN scope TEXT NOT NULL DEFAULT 'vie' CHECK (scope IN ('vie', 'alternance'));
+"#, r#"
+-- Récurrents définis à la main (annuels à montant variable, noms de domaine…).
+CREATE TABLE recurring_manual (
+    id             INTEGER PRIMARY KEY,
+    name           TEXT NOT NULL,
+    pattern        TEXT NOT NULL,
+    cadence        TEXT NOT NULL CHECK (cadence IN ('weekly', 'monthly', 'quarterly', 'yearly')),
+    kind           TEXT NOT NULL DEFAULT 'expense' CHECK (kind IN ('expense', 'income')),
+    category_id    INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+    expected_cents INTEGER,
+    created_at     TEXT NOT NULL
+);
 "#];
 
 /// Catégories proposées au départ (toutes modifiables). Les descriptions guident l'IA.

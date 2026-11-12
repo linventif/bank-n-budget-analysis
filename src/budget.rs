@@ -38,6 +38,10 @@ pub struct Recurring {
     pub interval_days: i64,
     /// active | late | stopped
     pub status: &'static str,
+    /// Total payé sur les 12 derniers mois.
+    pub total_12m_cents: i64,
+    /// Récurrent défini à la main (sinon détecté automatiquement).
+    pub manual_id: Option<i64>,
 }
 
 pub fn detect_recurring(conn: &Connection) -> Result<Vec<Recurring>> {
@@ -134,9 +138,100 @@ pub fn detect_recurring(conn: &Connection) -> Result<Vec<Recurring>> {
             next_day: lastr.day.checked_add_signed(chrono::Duration::days(g)).map(|d| d.to_string()),
             interval_days: g,
             status,
+            total_12m_cents: rows
+                .iter()
+                .filter(|r| (last_data - r.day).num_days() < 365)
+                .map(|r| r.amount)
+                .sum(),
+            manual_id: None,
         });
     }
+    // Récurrents définis à la main : remplacent les détections automatiques du même marchand.
+    let manual = manual_recurring(conn, last_data)?;
+    let patterns: Vec<String> = manual.iter().map(|(_, p)| p.clone()).collect();
+    out.retain(|r| !patterns.iter().any(|p| format!("{} {}", r.merchant, r.label.to_uppercase()).contains(p.as_str())));
+    out.extend(manual.into_iter().map(|(r, _)| r));
     out.sort_by(|a, b| b.monthly_cents.cmp(&a.monthly_cents));
+    Ok(out)
+}
+
+/// Calcule chaque récurrent manuel à partir des opérations dont le libellé contient son motif.
+fn manual_recurring(conn: &Connection, last_data: NaiveDate) -> Result<Vec<(Recurring, String)>> {
+    struct Def {
+        id: i64,
+        name: String,
+        pattern: String,
+        cadence: String,
+        kind: String,
+        category_id: Option<i64>,
+        expected: Option<i64>,
+    }
+    let defs: Vec<Def> = conn
+        .prepare("SELECT id, name, upper(pattern), cadence, kind, category_id, expected_cents FROM recurring_manual ORDER BY id")?
+        .query_map([], |r| {
+            Ok(Def { id: r.get(0)?, name: r.get(1)?, pattern: r.get(2)?, cadence: r.get(3)?, kind: r.get(4)?, category_id: r.get(5)?, expected: r.get(6)? })
+        })?
+        .collect::<Result<_, _>>()?;
+    let mut out = Vec::new();
+    for d in defs {
+        let debit = d.kind == "expense";
+        let rows: Vec<(NaiveDate, i64, String, Option<i64>)> = conn
+            .prepare(
+                "SELECT day, amount_cents, label, category_id FROM ledger
+                 WHERE instr(upper(label || ' ' || COALESCE(counterparty, '') || ' ' || COALESCE(merchant, '')), ?1) > 0
+                   AND (amount_cents < 0) = ?2 ORDER BY day",
+            )?
+            .query_map(params![d.pattern, debit], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?, r.get(3)?)))?
+            .filter_map(|r| r.ok())
+            .filter_map(|(day, a, l, c)| parse_day(&day).map(|d| (d, a.abs(), l, c)))
+            .collect();
+        let interval: i64 = match d.cadence.as_str() {
+            "weekly" => 7,
+            "monthly" => 30,
+            "quarterly" => 91,
+            _ => 365,
+        };
+        let cadence: &'static str = match d.cadence.as_str() {
+            "weekly" => "weekly",
+            "monthly" => "monthly",
+            "quarterly" => "quarterly",
+            _ => "yearly",
+        };
+        let total_12m: i64 = rows.iter().filter(|r| (last_data - r.0).num_days() < 365).map(|r| r.1).sum();
+        let last = rows.last();
+        let amount = d.expected.or(last.map(|r| r.1)).unwrap_or(0);
+        // Annuel / trimestriel : ce qui a réellement été payé sur 12 mois, ramené au mois.
+        let monthly = if interval >= 91 && total_12m > 0 { total_12m / 12 } else { (amount as f64 * 30.44 / interval as f64).round() as i64 };
+        let since = last.map(|r| (last_data - r.0).num_days());
+        let status = match since {
+            Some(s) if s > 2 * interval + 5 => "stopped",
+            Some(s) if s > interval + (interval / 5).max(5) => "late",
+            _ => "active",
+        };
+        out.push((
+            Recurring {
+                merchant: d.pattern.clone(),
+                name: d.name,
+                label: last.map(|r| r.2.clone()).unwrap_or_default(),
+                category_id: d.category_id.or(last.and_then(|r| r.3)),
+                kind: if debit { "expense" } else { "income" },
+                cadence,
+                fixed: true,
+                amount_cents: amount,
+                average_cents: if rows.is_empty() { 0 } else { rows.iter().map(|r| r.1).sum::<i64>() / rows.len() as i64 },
+                monthly_cents: monthly,
+                occurrences: rows.len(),
+                first_day: rows.first().map(|r| r.0.to_string()).unwrap_or_default(),
+                last_day: last.map(|r| r.0.to_string()).unwrap_or_default(),
+                next_day: last.and_then(|r| r.0.checked_add_signed(chrono::Duration::days(interval))).map(|x| x.to_string()),
+                interval_days: interval,
+                status,
+                total_12m_cents: total_12m,
+                manual_id: Some(d.id),
+            },
+            d.pattern,
+        ));
+    }
     Ok(out)
 }
 

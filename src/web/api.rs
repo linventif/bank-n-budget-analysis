@@ -25,6 +25,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/summary", get(summary))
         .route("/trends", get(trends))
         .route("/recurring", get(recurring))
+        .route("/recurring/manual", post(add_manual_recurring))
+        .route("/recurring/manual/{id}", delete(delete_manual_recurring))
         .route("/transactions", get(transactions))
         .route("/transactions/{id}", patch(update_transaction))
         .route("/categories", get(list_categories).post(create_category))
@@ -531,6 +533,47 @@ async fn recurring(State(app): State<Arc<AppState>>) -> ApiResult<Value> {
         "monthly_total_cents": monthly("expense", None),
         "items": items,
     })))
+}
+
+#[derive(Deserialize)]
+struct ManualRecurring {
+    name: String,
+    pattern: String,
+    cadence: String,
+    #[serde(default = "default_expense")]
+    kind: String,
+    category_id: Option<i64>,
+    expected_cents: Option<i64>,
+}
+fn default_expense() -> String {
+    "expense".into()
+}
+
+async fn add_manual_recurring(State(app): State<Arc<AppState>>, Json(b): Json<ManualRecurring>) -> ApiResult<Value> {
+    let pattern = b.pattern.split_whitespace().collect::<Vec<_>>().join(" ");
+    if b.name.trim().is_empty() || pattern.chars().count() < 2 || pattern.len() > 80 {
+        return Err(ApiError::bad("nom ou motif invalide"));
+    }
+    if !["weekly", "monthly", "quarterly", "yearly"].contains(&b.cadence.as_str()) || !["expense", "income"].contains(&b.kind.as_str()) {
+        return Err(ApiError::bad("cadence ou type invalide"));
+    }
+    let conn = app.db.lock().unwrap();
+    if let Some(c) = b.category_id {
+        ensure_category(&conn, c)?;
+    }
+    conn.execute(
+        "INSERT INTO recurring_manual (name, pattern, cadence, kind, category_id, expected_cents, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![b.name.trim(), pattern, b.cadence, b.kind, b.category_id, b.expected_cents, db::now()],
+    )?;
+    Ok(Json(json!({ "id": conn.last_insert_rowid() })))
+}
+
+async fn delete_manual_recurring(State(app): State<Arc<AppState>>, Path(id): Path<i64>) -> ApiResult<Value> {
+    if app.db.lock().unwrap().execute("DELETE FROM recurring_manual WHERE id = ?1", [id])? == 0 {
+        return Err(ApiError::not_found("récurrent inconnu"));
+    }
+    Ok(Json(json!({ "ok": true })))
 }
 
 // ---------- Opérations ----------

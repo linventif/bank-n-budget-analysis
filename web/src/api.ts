@@ -91,6 +91,8 @@ export interface RecurringItem {
   next_day: string | null;
   interval_days: number;
   status: "active" | "late" | "stopped";
+  total_12m_cents: number;
+  manual_id: number | null;
 }
 
 export interface RecurringResponse {
@@ -388,6 +390,9 @@ export const api = {
   summary: (month?: string) => call<Summary>("GET", `/summary${qs({ month })}`),
   trends: (months = 12) => call<Trends>("GET", `/trends${qs({ months })}`),
   recurring: () => call<RecurringResponse>("GET", "/recurring"),
+  addManualRecurring: (r: { name: string; pattern: string; cadence: string; kind: string; category_id?: number | null; expected_cents?: number | null }) =>
+    call<{ id: number }>("POST", "/recurring/manual", r),
+  deleteManualRecurring: (id: number) => call<{ ok: true }>("DELETE", `/recurring/manual/${id}`),
   transactions: (f: TxFilters, limit = 100, offset = 0) =>
     call<TxPage>("GET", `/transactions${qs({ ...f, limit, offset })}`),
   setExcluded: (id: number, excluded: boolean) => call<{ excluded: boolean }>("PATCH", `/transactions/${id}`, { excluded }),
