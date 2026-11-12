@@ -18,6 +18,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/budgets/import", post(import))
         .route("/budgets/{id}", get(one).patch(update).delete(remove))
         .route("/budgets/{id}/tracking", get(track))
+        .route("/budgets/{id}/calendar", patch(update_calendar))
         .route("/budgets/{id}/periods", post(add_period))
         .route("/budgets/{id}/lines", post(add_line))
         .route("/budget-periods/{id}", patch(update_period).delete(delete_period))
@@ -104,7 +105,7 @@ async fn create(State(app): State<Arc<AppState>>, Json(b): Json<CreateInput>) ->
                     .map(|p| ImportPeriod { name: p.name.trim().into(), months: p.months.unwrap_or(1), start_month: p.start_month.clone() })
                     .collect()
             };
-            budget::import(&mut conn, &ImportBudget { name: b.name.trim().into(), notes: String::new(), active: false, periods, lines: vec![] })?
+            budget::import(&mut conn, &ImportBudget { name: b.name.trim().into(), notes: String::new(), active: false, periods, lines: vec![], calendar: HashMap::new() })?
         }
     };
     // Le premier budget créé devient actif.
@@ -174,6 +175,43 @@ async fn track(State(app): State<Arc<AppState>>, Path(id): Path<i64>, Query(q): 
         return Err(ApiError::not_found("budget inconnu"));
     }
     Ok(Json(budget::tracking(&conn, id, q.month.as_deref(), q.period)?))
+}
+
+/// Affecte des mois à des périodes (null = retirer le mois du calendrier).
+async fn update_calendar(
+    State(app): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(b): Json<HashMap<String, Option<i64>>>,
+) -> ApiResult<Value> {
+    let mut conn = app.db.lock().unwrap();
+    if !exists(&conn, "budgets", id)? {
+        return Err(ApiError::not_found("budget inconnu"));
+    }
+    let tx = conn.transaction()?;
+    for (month, period) in &b {
+        check_month(month)?;
+        match period {
+            Some(p) => {
+                let ok: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM budget_periods WHERE id = ?1 AND budget_id = ?2)",
+                    params![p, id],
+                    |r| r.get(0),
+                )?;
+                if !ok {
+                    return Err(ApiError::bad("période d'un autre budget"));
+                }
+                tx.execute(
+                    "INSERT OR REPLACE INTO budget_calendar (budget_id, month, period_id) VALUES (?1, ?2, ?3)",
+                    params![id, month, p],
+                )?;
+            }
+            None => {
+                tx.execute("DELETE FROM budget_calendar WHERE budget_id = ?1 AND month = ?2", params![id, month])?;
+            }
+        }
+    }
+    tx.commit()?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 // ---------- Périodes ----------

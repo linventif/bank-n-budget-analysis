@@ -45,6 +45,11 @@ pub fn key(label: &str) -> String {
     out.chars().take(80).collect()
 }
 
+/// Paiement par carte Crédit Mutuel (« PAIEMENT CB 0511 VILLE MARCHAND … ») : la clé commence par la ville.
+pub fn is_card_payment(label: &str) -> bool {
+    CARD_PREFIX.is_match(label.to_uppercase().trim())
+}
+
 /// « M JEAN DUPONT » et « Jean Dupont » → « JEAN DUPONT ».
 pub fn holder_name(account_name: &str) -> Option<String> {
     let up = format!("{} ", account_name.to_uppercase());

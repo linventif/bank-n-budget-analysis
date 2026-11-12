@@ -83,7 +83,10 @@ export function TrackingView(props: {
             value={t().period_auto ? "" : String(period()?.id ?? "")}
             onChange={(e) => props.onPeriod(e.currentTarget.value ? Number(e.currentTarget.value) : null)}
           >
-            <option value="">Période : automatique ({period()?.name})</option>
+            <option value="">
+              Période : automatique ({period()?.name}
+              {props.budget.calendar?.[t().month] != null ? " · calendrier" : ""})
+            </option>
             <For each={props.budget.periods}>{(p) => <option value={String(p.id)}>Période : {p.name}</option>}</For>
           </select>
         </Show>

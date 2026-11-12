@@ -4,6 +4,7 @@ import { createStore, reconcile } from "solid-js/store";
 import { api, type Budget, type RecurringItem } from "../api";
 import { LineDialog, type LineDraft } from "../components/budget/LineDialog";
 import { NewBudgetDialog } from "../components/budget/NewBudgetDialog";
+import { CalendarEditor } from "../components/budget/CalendarEditor";
 import { PlanEditor } from "../components/budget/PlanEditor";
 import { RecurringView } from "../components/budget/RecurringView";
 import { TrackingView } from "../components/budget/TrackingView";
@@ -187,6 +188,9 @@ export default function BudgetPage() {
           </Show>
           <Show when={tab() === "plan"}>
             <PlanEditor budget={state.b!} onChange={refresh} onEditLine={setDraft} />
+            <Show when={state.b!.periods.length > 1}>
+              <CalendarEditor budget={state.b!} onChange={refresh} />
+            </Show>
             <Show when={state.b!.notes}>
               <p class="text-muted text-sm">{state.b!.notes}</p>
             </Show>

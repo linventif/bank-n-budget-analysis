@@ -176,6 +176,14 @@ CREATE TABLE auth_sessions (
     last_seen_at TEXT NOT NULL,
     expires_at   TEXT NOT NULL
 );
+"#, r#"
+-- Calendrier d'un budget : quelle période s'applique à quel mois (ex. alternance cours / entreprise).
+CREATE TABLE budget_calendar (
+    budget_id INTEGER NOT NULL REFERENCES budgets(id) ON DELETE CASCADE,
+    month     TEXT NOT NULL,
+    period_id INTEGER NOT NULL REFERENCES budget_periods(id) ON DELETE CASCADE,
+    PRIMARY KEY (budget_id, month)
+);
 "#];
 
 /// Catégories proposées au départ (toutes modifiables). Les descriptions guident l'IA.

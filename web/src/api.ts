@@ -129,6 +129,8 @@ export interface Budget {
   created_at: string;
   periods: BudgetPeriod[];
   lines: BudgetLine[];
+  /** Mois (AAAA-MM) → id de période. */
+  calendar: Record<string, number>;
 }
 
 export interface LineTrack {
@@ -359,6 +361,8 @@ export const api = {
   updateBudget: (id: number, b: { name?: string; notes?: string; is_active?: boolean }) => call<{ ok: true }>("PATCH", `/budgets/${id}`, b),
   deleteBudget: (id: number) => call<{ ok: true }>("DELETE", `/budgets/${id}`),
   tracking: (id: number, month?: string, period?: number) => call<Tracking>("GET", `/budgets/${id}/tracking${qs({ month, period })}`),
+  updateCalendar: (budgetId: number, months: Record<string, number | null>) =>
+    call<{ ok: true }>("PATCH", `/budgets/${budgetId}/calendar`, months),
   addPeriod: (budgetId: number, p: { name: string; months: number; start_month?: string | null }) =>
     call<{ id: number }>("POST", `/budgets/${budgetId}/periods`, p),
   updatePeriod: (id: number, p: { name?: string; months?: number; start_month?: string | null }) =>

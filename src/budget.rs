@@ -181,6 +181,8 @@ pub struct Budget {
     pub created_at: String,
     pub periods: Vec<Period>,
     pub lines: Vec<Line>,
+    /// Mois (AAAA-MM) → période : prioritaire pour choisir la période d'un mois (ex. alternance).
+    pub calendar: std::collections::BTreeMap<String, i64>,
 }
 
 pub fn list(conn: &Connection) -> Result<Vec<Budget>> {
@@ -237,7 +239,11 @@ pub fn get(conn: &Connection, id: i64) -> Result<Option<Budget>> {
     for l in lines.iter_mut() {
         l.amounts = amounts.remove(&l.id).unwrap_or_default();
     }
-    Ok(Some(Budget { id, name, notes, is_active, created_at, periods, lines }))
+    let calendar = conn
+        .prepare("SELECT month, period_id FROM budget_calendar WHERE budget_id = ?1")?
+        .query_map([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
+        .collect::<Result<_, _>>()?;
+    Ok(Some(Budget { id, name, notes, is_active, created_at, periods, lines, calendar }))
 }
 
 // ---------------------------------------------------------------------------
@@ -253,6 +259,9 @@ pub struct ImportBudget {
     pub active: bool,
     pub periods: Vec<ImportPeriod>,
     pub lines: Vec<ImportLine>,
+    /// Mois → nom de période.
+    #[serde(default)]
+    pub calendar: HashMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -308,6 +317,14 @@ pub fn import(conn: &mut Connection, b: &ImportBudget) -> Result<i64> {
             params![budget_id, p.name, p.months.clamp(1, 24), p.start_month, i as i64],
         )?;
         period_ids.push(tx.last_insert_rowid());
+    }
+    for (month, pname) in &b.calendar {
+        if let Some(pid) = b.periods.iter().position(|p| &p.name == pname).map(|i| period_ids[i]) {
+            tx.execute(
+                "INSERT OR REPLACE INTO budget_calendar (budget_id, month, period_id) VALUES (?1, ?2, ?3)",
+                params![budget_id, month, pid],
+            )?;
+        }
     }
     for (i, l) in b.lines.iter().enumerate() {
         if !KINDS.contains(&l.kind.as_str()) {
@@ -430,6 +447,7 @@ pub fn from_detected(conn: &mut Connection, name: &str) -> Result<i64> {
             active: false,
             periods: vec![ImportPeriod { name: "Mensuel".into(), months: 12, start_month: None }],
             lines,
+            calendar: HashMap::new(),
         },
     )
 }
@@ -455,7 +473,12 @@ pub fn duplicate(conn: &mut Connection, id: i64, name: &str) -> Result<i64> {
             once: l.once_cents.map(|c| c as f64 / 100.0),
         })
         .collect();
-    import(conn, &ImportBudget { name: name.into(), notes: b.notes.clone(), active: false, periods, lines })
+    let calendar = b
+        .calendar
+        .iter()
+        .filter_map(|(m, pid)| b.periods.iter().find(|p| p.id == *pid).map(|p| (m.clone(), p.name.clone())))
+        .collect();
+    import(conn, &ImportBudget { name: name.into(), notes: b.notes.clone(), active: false, periods, lines, calendar })
 }
 
 // ---------------------------------------------------------------------------
@@ -519,8 +542,11 @@ fn add_months((y, m): (i32, u32), n: i32) -> String {
     format!("{:04}-{:02}", idx.div_euclid(12), idx.rem_euclid(12) + 1)
 }
 
-/// La période qui couvre `month` (si des débuts sont renseignés), sinon la première.
-fn resolve_period(periods: &[Period], month: &str) -> Option<Period> {
+/// Période d'un mois : calendrier d'abord, puis période dont le début couvre le mois, sinon la première.
+fn resolve_period(periods: &[Period], calendar: &std::collections::BTreeMap<String, i64>, month: &str) -> Option<Period> {
+    if let Some(p) = calendar.get(month).and_then(|id| periods.iter().find(|p| p.id == *id)) {
+        return Some(p.clone());
+    }
     let m = ym(month)?;
     periods
         .iter()
@@ -567,7 +593,7 @@ pub fn tracking(conn: &Connection, budget_id: i64, month: Option<&str>, period_i
         .unwrap_or_else(|| current.clone());
     let (period, period_auto) = match period_id.and_then(|id| b.periods.iter().find(|p| p.id == id)) {
         Some(p) => (Some(p.clone()), false),
-        None => (resolve_period(&b.periods, &month), true),
+        None => (resolve_period(&b.periods, &b.calendar, &month), true),
     };
     let m = ym(&month).unwrap_or((today.year(), today.month()));
     let from = add_months(m, -3);
@@ -729,9 +755,14 @@ mod tests {
             Period { id: 1, name: "A".into(), months: 5, start_month: Some("2026-09".into()), position: 0 },
             Period { id: 2, name: "B".into(), months: 4, start_month: Some("2027-02".into()), position: 1 },
         ];
-        assert_eq!(resolve_period(&ps, "2026-11").unwrap().id, 1);
-        assert_eq!(resolve_period(&ps, "2027-03").unwrap().id, 2);
-        assert_eq!(resolve_period(&ps, "2027-09").unwrap().id, 1); // hors plage : la première
+        let none = std::collections::BTreeMap::new();
+        assert_eq!(resolve_period(&ps, &none, "2026-11").unwrap().id, 1);
+        assert_eq!(resolve_period(&ps, &none, "2027-03").unwrap().id, 2);
+        assert_eq!(resolve_period(&ps, &none, "2027-09").unwrap().id, 1); // hors plage : la première
+        // Le calendrier est prioritaire (alternance : novembre en cours, décembre en entreprise).
+        let cal = std::collections::BTreeMap::from([("2026-11".to_string(), 2), ("2026-12".to_string(), 1)]);
+        assert_eq!(resolve_period(&ps, &cal, "2026-11").unwrap().id, 2);
+        assert_eq!(resolve_period(&ps, &cal, "2026-12").unwrap().id, 1);
         assert_eq!(add_months((2026, 1), -3), "2025-10");
     }
 }

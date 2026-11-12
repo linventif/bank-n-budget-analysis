@@ -89,6 +89,7 @@ Onglet **Budget**, structuré comme un tableur : postes (lignes, groupés par se
 (colonnes, ex. « Toulouse » × 5 mois puis « Lille » × 4 mois), plus une colonne annuel / ponctuel.
 Types de poste : dépense, aide / revenu (réduit le reste à charge), salaire, info (hors totaux).
 
+- **Calendrier** : période appliquée à chaque mois (ex. alternance cours / entreprise), prioritaire sur le début des périodes.
 - **Plan** : édition directe des montants ; totaux « dépenses − aides = reste à charge » et
   « salaire − reste à charge = disponible », par période et sur toute la durée.
 - **Suivi** (budget dynamique) : pour un mois, prévu / réel / détecté (moyenne des 3 mois

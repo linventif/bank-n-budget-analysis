@@ -6,6 +6,7 @@ mod config;
 mod db;
 mod eb;
 mod merchant;
+mod suggest;
 mod sync;
 mod web;
 

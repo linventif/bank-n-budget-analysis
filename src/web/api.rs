@@ -1,7 +1,7 @@
 //! API JSON du tableau de bord (interface privée uniquement).
 
 use crate::eb::{Access, AspspRef, StartAuth};
-use crate::{AppState, categorize, db, merchant, sync};
+use crate::{AppState, categorize, db, merchant, suggest, sync};
 use anyhow::anyhow;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -30,6 +30,9 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/categories", get(list_categories).post(create_category))
         .route("/categories/{id}", patch(update_category).delete(delete_category))
         .route("/rules", get(list_rules).post(create_rule))
+        .route("/rules/batch", post(create_rules))
+        .route("/rules/suggestions", get(rule_suggestions).delete(reset_suggestions))
+        .route("/rules/suggestions/dismiss", post(dismiss_suggestion))
         .route("/rules/{id}", delete(delete_rule))
         .route("/sync", post(start_sync))
         .route("/classify", post(start_classify))
@@ -869,11 +872,16 @@ struct RuleInput {
     category_id: i64,
 }
 
-async fn create_rule(State(app): State<Arc<AppState>>, Json(b): Json<RuleInput>) -> ApiResult<Value> {
-    let pattern = b.pattern.split_whitespace().collect::<Vec<_>>().join(" ");
+fn clean_pattern(p: &str) -> Result<String, ApiError> {
+    let pattern = p.split_whitespace().collect::<Vec<_>>().join(" ");
     if pattern.chars().count() < 2 || pattern.len() > 80 {
         return Err(ApiError::bad("motif trop court ou trop long"));
     }
+    Ok(pattern)
+}
+
+async fn create_rule(State(app): State<Arc<AppState>>, Json(b): Json<RuleInput>) -> ApiResult<Value> {
+    let pattern = clean_pattern(&b.pattern)?;
     let mut conn = app.db.lock().unwrap();
     ensure_category(&conn, b.category_id)?;
     conn.execute(
@@ -882,6 +890,67 @@ async fn create_rule(State(app): State<Arc<AppState>>, Json(b): Json<RuleInput>)
     )?;
     let stats = categorize::apply_deterministic(&mut conn)?;
     Ok(Json(json!({ "id": conn.last_insert_rowid(), "stats": stats })))
+}
+
+#[derive(Deserialize)]
+struct RulesInput {
+    patterns: Vec<String>,
+    category_id: i64,
+}
+
+/// Plusieurs motifs vers une même catégorie (suggestion acceptée), appliqués en une fois.
+async fn create_rules(State(app): State<Arc<AppState>>, Json(b): Json<RulesInput>) -> ApiResult<Value> {
+    let patterns: Vec<String> = b.patterns.iter().map(|p| clean_pattern(p)).collect::<Result<_, _>>()?;
+    if patterns.is_empty() || patterns.len() > 20 {
+        return Err(ApiError::bad("de 1 à 20 motifs"));
+    }
+    let mut conn = app.db.lock().unwrap();
+    ensure_category(&conn, b.category_id)?;
+    {
+        let tx = conn.transaction()?;
+        for p in &patterns {
+            let exists: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM rules WHERE upper(pattern) = upper(?1) AND category_id = ?2)",
+                params![p, b.category_id],
+                |r| r.get(0),
+            )?;
+            if !exists {
+                tx.execute(
+                    "INSERT INTO rules (pattern, category_id, created_at) VALUES (?1, ?2, ?3)",
+                    params![p, b.category_id, db::now()],
+                )?;
+            }
+        }
+        tx.commit()?;
+    }
+    let stats = categorize::apply_deterministic(&mut conn)?;
+    Ok(Json(json!({ "ok": true, "stats": stats })))
+}
+
+async fn rule_suggestions(State(app): State<Arc<AppState>>) -> ApiResult<Value> {
+    let conn = app.db.lock().unwrap();
+    let items = suggest::suggestions(&conn)?;
+    let dismissed = suggest::dismissed(&conn)?.len();
+    Ok(Json(json!({ "items": items, "dismissed": dismissed })))
+}
+
+#[derive(Deserialize)]
+struct DismissInput {
+    key: String,
+}
+
+async fn dismiss_suggestion(State(app): State<Arc<AppState>>, Json(b): Json<DismissInput>) -> ApiResult<Value> {
+    if b.key.is_empty() || b.key.len() > 500 {
+        return Err(ApiError::bad("suggestion invalide"));
+    }
+    suggest::dismiss(&app.db.lock().unwrap(), &b.key)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// Fait réapparaître les suggestions ignorées.
+async fn reset_suggestions(State(app): State<Arc<AppState>>) -> ApiResult<Value> {
+    suggest::reset_dismissed(&app.db.lock().unwrap())?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 async fn delete_rule(State(app): State<Arc<AppState>>, Path(id): Path<i64>) -> ApiResult<Value> {
