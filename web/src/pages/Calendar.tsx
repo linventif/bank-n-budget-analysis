@@ -1,19 +1,20 @@
 import { A, useSearchParams } from "@solidjs/router";
-import { createMemo, createResource, For, Show } from "solid-js";
+import { createMemo, createResource, For, onCleanup, onMount, Show } from "solid-js";
 import { api, type Category, type RecurringItem, type Tx } from "../api";
+import { YearView } from "../components/calendar/YearView";
 import { BarList, type BarRow } from "../components/charts/BarList";
 import { Card, CategoryIcon, Empty, Ico, Spinner } from "../components/ui";
 import { dayLong, money, money0, monthLong, prettyMerchant } from "../format";
 import { errorText, store } from "../store";
 
 /**
- * Calendrier : les opérations du mois posées jour par jour, par catégorie, avec les paiements
+ * Calendrier : les opérations du mois ou de l'année, jour par jour, avec les paiements
  * récurrents (passés et à venir). Tous les filtres vivent dans l'URL (partageables, retour arrière).
  */
 type Params = {
   month?: string;
   day?: string;
-  view?: string; // "grid" (défaut) | "matrix"
+  view?: string; // "grid" (défaut) | "matrix" | "year"
   kind?: string; // "expense" (défaut) | "income" | "all"
   cats?: string; // ids séparés par des virgules ; "none" = non classé
   account?: string;
@@ -53,6 +54,25 @@ async function monthTx(month: string, budget?: string): Promise<Tx[]> {
   }
 }
 
+const monthsInPeriod = (period: string) =>
+  period.length === 4 ? Array.from({ length: 12 }, (_, i) => `${period}-${pad2(i + 1)}`) : [period];
+
+/** Une année réutilise l'API mensuelle, avec trois requêtes simultanées au maximum. */
+async function periodTx(period: string, budget?: string): Promise<Tx[]> {
+  const months = monthsInPeriod(period);
+  const results: Tx[][] = [];
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(3, months.length) }, async () => {
+      while (next < months.length) {
+        const index = next++;
+        results[index] = await monthTx(months[index], budget);
+      }
+    }),
+  );
+  return results.flat();
+}
+
 /** Un récurrent « attrape » une opération : même marchand (détecté) ou motif contenu dans le libellé (manuel). */
 const recurringMatcher = (items: RecurringItem[]) => {
   const byMerchant = new Map(items.filter((r) => r.manual_id == null).map((r) => [r.merchant, r]));
@@ -88,17 +108,28 @@ function occurrences(r: RecurringItem, month: string, today: string): Upcoming[]
 
 export default function CalendarPage() {
   const [params, setParams] = useSearchParams<Params>();
-  const month = () => (params.month && /^\d{4}-\d{2}$/.test(params.month) ? params.month : thisMonth());
+  const month = () => (params.month && /^\d{4}-(0[1-9]|1[0-2])$/.test(params.month) ? params.month : thisMonth());
   const kind = (): Kind => (params.kind === "income" || params.kind === "all" ? params.kind : "expense");
-  const view = () => (params.view === "matrix" ? "matrix" : "grid");
+  const view = () => (params.view === "year" ? "year" : params.view === "matrix" ? "matrix" : "grid");
+  const year = () => month().slice(0, 4);
+  const period = createMemo(() => (view() === "year" ? year() : month()));
+  const periodLabel = () => (view() === "year" ? year() : monthLong(month()));
+  const visibleMonths = createMemo(() => monthsInPeriod(period()));
   const cats = createMemo(() => new Set((params.cats ?? "").split(",").filter(Boolean)));
   const today = ymd(new Date());
 
-  const [txs] = createResource(() => ({ m: month(), v: store.version() }), ({ m }) => monthTx(m));
-  const [outIds] = createResource(
-    () => (params.budget === "out" ? { m: month(), v: store.version() } : false),
-    async ({ m }) => new Set((await monthTx(m, "out")).map((t) => t.id)),
+  const [txs] = createResource(
+    () => ({ p: period(), v: store.version() }),
+    async ({ p }) => ({ period: p, items: await periodTx(p) }),
   );
+  const [outIds] = createResource(
+    () => (params.budget === "out" ? { p: period(), v: store.version() } : false),
+    async ({ p }) => ({ period: p, ids: new Set((await periodTx(p, "out")).map((t) => t.id)) }),
+  );
+  const currentTxs = () => !txs.error && txs.latest?.period === period() ? txs.latest.items : undefined;
+  const currentOutIds = () => !outIds.error && outIds.latest?.period === period() ? outIds.latest.ids : undefined;
+  const periodReady = () => currentTxs() !== undefined && (params.budget !== "out" || currentOutIds() !== undefined);
+  const loadError = () => txs.error || (params.budget === "out" && outIds.error);
   const [recurring] = createResource(store.version, () => api.recurring());
   const [accounts] = createResource(() => api.accounts());
   const [summary] = createResource(store.version, () => api.summary());
@@ -116,8 +147,8 @@ export default function CalendarPage() {
 
   // Opérations après filtres (les exclues ne comptent jamais, comme partout ailleurs).
   const filtered = createMemo(() => {
-    const all = txs.latest ?? [];
-    const out = params.budget === "out" ? outIds.latest : null;
+    const all = (currentTxs() ?? []).filter((t) => t.day.startsWith(period()));
+    const out = params.budget === "out" ? (currentOutIds() ?? new Set<number>()) : null;
     const q = query();
     return all.filter(
       (t) =>
@@ -135,7 +166,8 @@ export default function CalendarPage() {
 
   // Échéances à venir : mêmes filtres quand ils ont un sens pour un récurrent.
   const upcoming = createMemo((): Upcoming[] => {
-    if (params.upcoming === "0" || params.rec === "hide" || params.budget === "out" || month() < thisMonth()) return [];
+    if (params.upcoming === "0" || params.rec === "hide" || params.budget === "out") return [];
+    const months = visibleMonths().filter((m) => m >= thisMonth());
     const q = query();
     return (recurring.latest?.items ?? [])
       .filter(
@@ -145,7 +177,7 @@ export default function CalendarPage() {
           (!q || `${r.name} ${r.merchant} ${r.label}`.toLowerCase().includes(q)) &&
           r.amount_cents >= minCents(),
       )
-      .flatMap((r) => occurrences(r, month(), today));
+      .flatMap((r) => months.flatMap((m) => occurrences(r, m, today)));
   });
 
   /** Valeur d'une opération dans la vue : dépense positive en vue dépenses, revenus positifs en vue revenus, signé en vue tout. */
@@ -153,11 +185,12 @@ export default function CalendarPage() {
 
   type Day = { day: string; total: number; expense: number; income: number; items: Tx[]; byCat: Map<string, number>; upcoming: Upcoming[] };
   const days = createMemo(() => {
-    const n = daysIn(month());
     const map = new Map<string, Day>();
-    for (let i = 1; i <= n; i++) {
-      const d = `${month()}-${pad2(i)}`;
-      map.set(d, { day: d, total: 0, expense: 0, income: 0, items: [], byCat: new Map(), upcoming: [] });
+    for (const month of visibleMonths()) {
+      for (let i = 1; i <= daysIn(month); i++) {
+        const d = `${month}-${pad2(i)}`;
+        map.set(d, { day: d, total: 0, expense: 0, income: 0, items: [], byCat: new Map(), upcoming: [] });
+      }
     }
     for (const t of filtered()) {
       const d = map.get(t.day);
@@ -178,7 +211,7 @@ export default function CalendarPage() {
   const upcomingTotal = () => upcoming().reduce((a, u) => a + u.r.amount_cents, 0);
   const maxDay = createMemo(() => Math.max(1, ...days().map((d) => Math.abs(kind() === "all" ? d.expense : d.total))));
   const busiest = createMemo(() => days().reduce<Day | null>((a, d) => (dayValue(d) > (a ? dayValue(a) : 0) ? d : a), null));
-  const elapsed = () => (month() === thisMonth() ? Number(today.slice(8, 10)) : month() < thisMonth() ? daysIn(month()) : 0);
+  const elapsed = createMemo(() => days().filter((d) => d.day <= today).length);
   const recurringPaid = createMemo(() => filtered().filter((t) => recOf()(t) != null));
 
   const catLabel = (k: string) => (k === "none" ? "Non classé" : (store.categoryById().get(Number(k))?.name ?? "?"));
@@ -209,12 +242,52 @@ export default function CalendarPage() {
   const selected = () => (params.day?.startsWith(month()) ? days().find((d) => d.day === params.day) : undefined);
   const selectDay = (d: string) => setParams({ day: params.day === d ? undefined : d });
   const goMonth = (m: string) => setParams({ month: m === thisMonth() ? undefined : m, day: undefined });
+  const movePeriod = (direction: number) => goMonth(shiftMonth(month(), direction * (view() === "year" ? 12 : 1)));
+  const openMonth = (m: string) => setParams({ month: m === thisMonth() ? undefined : m, day: undefined, view: undefined });
+  const openDay = (day: string) =>
+    setParams({ month: day.slice(0, 7) === thisMonth() ? undefined : day.slice(0, 7), day, view: view() === "year" ? undefined : params.view });
+
+  let navigation: HTMLDivElement | undefined;
+  onMount(() => {
+    if (!navigation) return;
+    const element = navigation;
+    let accumulated = 0;
+    let locked = false;
+    let reset: number | undefined;
+    const wheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest("input, select, textarea, [contenteditable], [role=radiogroup]")) return;
+      const horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY);
+      // La matrice garde son défilement horizontal ; l'année garde son défilement vertical.
+      if (view() === "matrix" && horizontal) return;
+      if (view() === "year" && !horizontal && !target?.closest("header")) return;
+      const delta = (horizontal ? event.deltaX : event.deltaY) * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? element.clientHeight : 1);
+      if (!delta) return;
+      event.preventDefault();
+      window.clearTimeout(reset);
+      reset = window.setTimeout(() => { accumulated = 0; locked = false; }, 180);
+      if (locked) return;
+      if (Math.sign(delta) !== Math.sign(accumulated)) accumulated = 0;
+      accumulated += delta;
+      if (Math.abs(accumulated) >= 40) {
+        movePeriod(Math.sign(accumulated));
+        locked = true;
+      }
+    };
+    element.addEventListener("wheel", wheel, { passive: false });
+    onCleanup(() => {
+      element.removeEventListener("wheel", wheel);
+      window.clearTimeout(reset);
+    });
+  });
 
   let debounce: number | undefined;
   const onSearch = (v: string) => {
     window.clearTimeout(debounce);
     debounce = window.setTimeout(() => setParams({ q: v || undefined }), 250);
   };
+  onCleanup(() => window.clearTimeout(debounce));
 
   const filtersActive = () => !!(params.cats || params.account || params.q || params.min || params.rec || params.budget || params.kind);
   const clearFilters = () =>
@@ -234,6 +307,7 @@ export default function CalendarPage() {
     s.add(month());
     return [...s].sort().reverse();
   });
+  const years = createMemo(() => [...new Set(months().map((m) => m.slice(0, 4)))].sort().reverse());
 
   const tint = (v: number) => {
     if (v <= 0) return undefined;
@@ -250,18 +324,24 @@ export default function CalendarPage() {
         </div>
         <div class="flex items-center gap-2">
           <div class="join">
-            <button class="btn btn-sm join-item" onClick={() => goMonth(shiftMonth(month(), -1))} aria-label="Mois précédent">
+            <button class="btn btn-sm join-item" onClick={() => movePeriod(-1)} aria-label={view() === "year" ? "Année précédente" : "Mois précédent"}>
               <Ico icon="lucide:chevron-left" />
             </button>
-            <select class="select select-sm join-item w-44" value={month()} onChange={(e) => goMonth(e.currentTarget.value)} aria-label="Mois">
-              <For each={months()}>{(m) => <option value={m}>{monthLong(m)}</option>}</For>
-            </select>
-            <button class="btn btn-sm join-item" onClick={() => goMonth(shiftMonth(month(), 1))} aria-label="Mois suivant">
+            <Show when={view() === "year"} fallback={
+              <select class="select select-sm join-item w-44" value={month()} onChange={(e) => goMonth(e.currentTarget.value)} aria-label="Mois">
+                <For each={months()}>{(m) => <option value={m}>{monthLong(m)}</option>}</For>
+              </select>
+            }>
+              <select class="select select-sm join-item w-44" value={year()} onChange={(e) => goMonth(`${e.currentTarget.value}-${month().slice(5, 7)}`)} aria-label="Année">
+                <For each={years()}>{(y) => <option value={y}>{y}</option>}</For>
+              </select>
+            </Show>
+            <button class="btn btn-sm join-item" onClick={() => movePeriod(1)} aria-label={view() === "year" ? "Année suivante" : "Mois suivant"}>
               <Ico icon="lucide:chevron-right" />
             </button>
           </div>
-          <Show when={month() !== thisMonth()}>
-            <button class="btn btn-sm btn-ghost" onClick={() => setParams({ month: undefined, day: today })}>
+          <Show when={period() !== (view() === "year" ? thisMonth().slice(0, 4) : thisMonth())}>
+            <button class="btn btn-sm btn-ghost" onClick={() => setParams({ month: undefined, day: view() === "year" ? undefined : today })}>
               Aujourd'hui
             </button>
           </Show>
@@ -308,7 +388,7 @@ export default function CalendarPage() {
         >
           <Ico icon="lucide:wallet" /> Hors budget
         </button>
-        <label class="label cursor-pointer gap-2 text-sm" title="Paiements récurrents attendus d'ici la fin du mois">
+        <label class="label cursor-pointer gap-2 text-sm" title={view() === "year" ? "Paiements récurrents attendus d'ici la fin de l'année" : "Paiements récurrents attendus d'ici la fin du mois"}>
           <input type="checkbox" class="toggle toggle-sm" checked={params.upcoming !== "0"} onChange={(e) => setParams({ upcoming: e.currentTarget.checked ? undefined : "0" })} />
           À venir
         </label>
@@ -319,49 +399,67 @@ export default function CalendarPage() {
         </Show>
       </div>
 
-      <Show when={txs.error}>
+      <Show when={loadError()}>
         <div role="alert" class="alert alert-error">
-          <Ico icon="lucide:circle-alert" /> {errorText(txs.error)}
+          <Ico icon="lucide:circle-alert" /> {errorText(loadError())}
         </div>
       </Show>
 
-      {/* Synthèse du mois (filtres appliqués) */}
+      {/* Synthèse de la période (filtres appliqués) */}
       <div class="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <Stat
           label={kind() === "income" ? "Reçu" : kind() === "all" ? "Solde" : "Dépensé"}
-          value={money0(monthTotal())}
-          note={`${filtered().length} opération${filtered().length > 1 ? "s" : ""}`}
+          value={periodReady() ? money0(monthTotal()) : "—"}
+          note={periodReady() ? `${filtered().length} opération${filtered().length > 1 ? "s" : ""}` : loadError() ? "données indisponibles" : "chargement…"}
         />
         <Stat
           label="Moyenne par jour"
-          value={elapsed() ? money0(monthTotal() / elapsed()) : "—"}
-          note={elapsed() ? `sur ${elapsed()} jour${elapsed() > 1 ? "s" : ""}` : "mois à venir"}
+          value={periodReady() && elapsed() ? money0(monthTotal() / elapsed()) : "—"}
+          note={elapsed() ? `sur ${elapsed()} jour${elapsed() > 1 ? "s" : ""}` : view() === "year" ? "année à venir" : "mois à venir"}
         />
         <Stat
           label="Jour le plus chargé"
           value={busiest() ? money0(dayValue(busiest()!)) : "—"}
           note={busiest() ? dayLong(busiest()!.day) : "aucune opération"}
-          onClick={busiest() ? () => setParams({ day: busiest()!.day }) : undefined}
+          onClick={busiest() ? () => openDay(busiest()!.day) : undefined}
         />
         <Stat
           label="Récurrents"
-          value={money0(recurringPaid().reduce((a, t) => a + Math.abs(t.amount_cents), 0))}
+          value={periodReady() ? money0(recurringPaid().reduce((a, t) => a + Math.abs(t.amount_cents), 0)) : "—"}
           note={
             `${recurringPaid().length} payé${recurringPaid().length > 1 ? "s" : ""}` +
-            (upcoming().length ? ` · ${money0(upcomingTotal())} encore attendus` : " ce mois-ci")
+            (upcoming().length ? ` · ${money0(upcomingTotal())} encore attendus` : view() === "year" ? " cette année" : " ce mois-ci")
           }
         />
       </div>
 
-      <div class="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
+      <div class={`grid grid-cols-1 gap-5 ${view() === "year" ? "" : "xl:grid-cols-[minmax(0,1fr)_22rem]"}`}>
+        <div
+          ref={navigation}
+          tabIndex={0}
+          role="group"
+          aria-label="Navigation du calendrier"
+          aria-busy={txs.loading || outIds.loading}
+          class="min-w-0 rounded-xl focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
+          onKeyDown={(event) => {
+            if (event.target !== event.currentTarget || event.ctrlKey || event.metaKey || event.altKey) return;
+            if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+              event.preventDefault();
+              movePeriod(event.key === "ArrowLeft" ? -1 : 1);
+            }
+          }}
+        >
         <Card
-          class={`!p-0 [&>header]:px-4 [&>header]:pt-4 sm:[&>header]:px-5 ${txs.loading ? "refetching" : ""}`}
-          title={monthLong(month())}
-          subtitle={view() === "grid" ? "Clique sur un jour pour le détail" : "Catégories × jours · clique sur une case pour le détail"}
+          class={`!p-0 [&>header]:flex-wrap [&>header]:px-4 [&>header]:pt-4 sm:[&>header]:px-5 ${txs.loading || outIds.loading ? "refetching" : ""}`}
+          title={<span aria-live="polite">{periodLabel()}</span>}
+          subtitle={view() === "year" ? "Clique sur un mois pour l'ouvrir · défile horizontalement pour changer d'année" : view() === "grid" ? "Molette : changer de mois · clique sur un jour pour le détail" : "Molette : changer de mois · défile horizontalement pour parcourir les jours"}
           actions={
             <div class="tabs tabs-box tabs-xs" role="radiogroup" aria-label="Vue">
               <button role="radio" aria-checked={view() === "grid"} class={`tab gap-1 ${view() === "grid" ? "tab-active" : ""}`} onClick={() => setParams({ view: undefined })}>
                 <Ico icon="lucide:calendar-days" /> Mois
+              </button>
+              <button role="radio" aria-checked={view() === "year"} class={`tab gap-1 ${view() === "year" ? "tab-active" : ""}`} onClick={() => setParams({ view: "year", day: undefined })}>
+                <Ico icon="lucide:calendar-range" /> Année
               </button>
               <button role="radio" aria-checked={view() === "matrix"} class={`tab gap-1 ${view() === "matrix" ? "tab-active" : ""}`} onClick={() => setParams({ view: "matrix" })}>
                 <Ico icon="lucide:grid-3x3" /> Catégories
@@ -369,7 +467,19 @@ export default function CalendarPage() {
             </div>
           }
         >
-          <Show when={txs.latest} fallback={<div class="flex justify-center py-24"><Spinner class="loading-md" /></div>}>
+          <Show when={currentTxs()} fallback={
+            <Show when={txs.loading} fallback={<div class="py-12"><Empty icon="lucide:calendar-x" title="Données indisponibles pour cette période" /></div>}>
+              <div class="flex justify-center py-24"><Spinner class="loading-md" /></div>
+            </Show>
+          }>
+            <Show when={view() !== "year"} fallback={
+              <YearView
+                year={year()}
+                today={today}
+                days={days().map((d) => ({ day: d.day, value: dayValue(d), total: d.total, count: d.items.length, upcoming: d.upcoming.length }))}
+                onMonth={openMonth}
+              />
+            }>
             <Show
               when={view() === "grid"}
               fallback={<CategoryMatrix month={month()} days={days()} order={byCategory().map((r) => r.key)} label={catLabel} category={catObj} selected={params.day} onSelect={(d) => setParams({ day: d })} />}
@@ -412,15 +522,17 @@ export default function CalendarPage() {
                 </div>
               </div>
             </Show>
+            </Show>
           </Show>
         </Card>
+        </div>
 
-        <div class="flex flex-col gap-5">
+        <div class={view() === "year" ? `grid grid-cols-1 gap-5 ${upcoming().length ? "lg:grid-cols-2" : ""}` : "flex flex-col gap-5"}>
           <Show
             when={selected()}
             fallback={
-              <Card title="Par catégorie" subtitle={`${monthLong(month())} · clique pour filtrer`}>
-                <Show when={byCategory().length} fallback={<Empty icon="lucide:calendar-x" title="Rien ce mois-ci avec ces filtres" />}>
+              <Card title="Par catégorie" subtitle={`${periodLabel()} · clique pour filtrer`}>
+                <Show when={byCategory().length} fallback={<Empty icon="lucide:calendar-x" title="Rien sur cette période avec ces filtres" />}>
                   <BarList rows={byCategory()} total={byCategory().reduce((a, r) => a + r.value, 0)} hint="Clique sur une catégorie pour filtrer le calendrier" />
                 </Show>
               </Card>
@@ -435,12 +547,12 @@ export default function CalendarPage() {
           </Show>
 
           <Show when={upcoming().length}>
-            <Card title="À venir ce mois-ci" subtitle="Récurrents attendus d'après leur rythme habituel">
+            <Card title={view() === "year" ? "À venir cette année" : "À venir ce mois-ci"} subtitle="Récurrents attendus d'après leur rythme habituel">
               <ul class="flex flex-col">
                 <For each={[...upcoming()].sort((a, b) => a.day.localeCompare(b.day))}>
                   {(u) => (
                     <li>
-                      <button class="hover:bg-base-200 flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left" onClick={() => setParams({ day: u.day })}>
+                      <button class="hover:bg-base-200 flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left" onClick={() => openDay(u.day)}>
                         <CategoryIcon category={u.r.category_id != null ? store.categoryById().get(u.r.category_id) : null} size="sm" />
                         <div class="min-w-0 flex-1">
                           <div class="truncate text-sm">{u.r.name}</div>
