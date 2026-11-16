@@ -6,7 +6,7 @@ import { Card, Empty, Ico, IconButton, SourceBadge, Spinner } from "../component
 import { dayLabel, dayLong, money, monthLong, prettyMerchant, signedMoney } from "../format";
 import { errorText, store } from "../store";
 
-type Params = { month?: string; category?: string; account?: string; q?: string; kind?: string; source?: string; excluded?: string };
+type Params = { month?: string; category?: string; account?: string; q?: string; kind?: string; source?: string; excluded?: string; budget?: string };
 
 const KINDS: { v: string; label: string }[] = [
   { v: "", label: "Tout" },
@@ -27,6 +27,7 @@ export default function Transactions() {
     source: params.source,
     hide_transfers: store.hideTransfers(),
     excluded: params.excluded,
+    budget: params.budget,
   });
   createEffect(on(() => JSON.stringify(filters()), () => setPages(1), { defer: true }));
 
@@ -79,7 +80,11 @@ export default function Transactions() {
 
   const active = () => Object.values(filters()).some((v) => v);
   const sourceTitle = () =>
-    params.source === "review" ? "Classements de l'IA à vérifier" : params.category === "none" ? "Opérations sans catégorie" : null;
+    params.source === "review" ? "Classements de l'IA à vérifier" : params.category === "none"
+        ? "Opérations sans catégorie"
+        : params.budget === "out"
+          ? "Dépenses hors budget"
+          : null;
 
   return (
     <div class="flex flex-col gap-5">
@@ -95,7 +100,7 @@ export default function Transactions() {
           </p>
         </div>
         <Show when={active()}>
-          <button class="btn btn-ghost btn-sm" onClick={() => setParams({ month: undefined, category: undefined, account: undefined, q: undefined, kind: undefined, source: undefined, excluded: undefined })}>
+          <button class="btn btn-ghost btn-sm" onClick={() => setParams({ month: undefined, category: undefined, account: undefined, q: undefined, kind: undefined, source: undefined, excluded: undefined, budget: undefined })}>
             <Ico icon="lucide:x" /> Effacer les filtres
           </button>
         </Show>
@@ -156,6 +161,14 @@ export default function Transactions() {
           title="Opérations retirées des statistiques"
         >
           <Ico icon="lucide:eye-off" /> Exclues
+        </button>
+        <button
+          class={`btn btn-sm ${params.budget === "out" ? "btn-active" : ""}`}
+          onClick={() => setParams({ budget: params.budget === "out" ? undefined : "out" })}
+          aria-pressed={params.budget === "out"}
+          title="Dépenses qu'aucun poste du budget actif ne couvre"
+        >
+          <Ico icon="lucide:wallet" /> Hors budget
         </button>
         <button
           class={`btn btn-sm ${params.source === "review" ? "btn-warning" : ""}`}

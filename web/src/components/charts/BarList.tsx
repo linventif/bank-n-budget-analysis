@@ -6,6 +6,8 @@ import { CategoryIcon, Ico } from "../ui";
 export type BarRow = {
   key: string;
   category: Category | null;
+  /** Icône neutre quand la ligne n'est pas une catégorie (section de budget…). */
+  icon?: string;
   label: string;
   value: number;
   /** Repère de comparaison (moyenne) dessiné comme un trait sur la barre. */
@@ -18,7 +20,7 @@ export type BarRow = {
  * Barres horizontales classées, une seule teinte : comparer des parts entre elles.
  * Chaque ligne porte son libellé et sa valeur (lisible sans survol).
  */
-export function BarList(props: { rows: BarRow[]; total: number; referenceLabel?: string }) {
+export function BarList(props: { rows: BarRow[]; total: number; referenceLabel?: string; hint?: string }) {
   const max = () => Math.max(1, ...props.rows.map((r) => Math.max(r.value, r.reference ?? 0)));
   return (
     <ul class="flex flex-col gap-1">
@@ -39,7 +41,11 @@ export function BarList(props: { rows: BarRow[]; total: number; referenceLabel?:
                 title={tip()}
                 aria-label={tip()}
               >
-                <CategoryIcon category={r.category} size="sm" />
+                <Show when={r.icon} fallback={<CategoryIcon category={r.category} size="sm" />}>
+                  <span class="bg-base-200 text-ink-2 inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-[15px]">
+                    <Ico icon={r.icon!} />
+                  </span>
+                </Show>
                 <div class="min-w-0">
                   <div class="flex items-baseline justify-between gap-2">
                     <span class="truncate text-sm">{r.label}</span>
@@ -73,7 +79,7 @@ export function BarList(props: { rows: BarRow[]; total: number; referenceLabel?:
           <span class="inline-block h-3 w-0.5 rounded-full" style={{ background: "var(--ink-muted)" }} />
           {props.referenceLabel ?? "Référence"}
           <Ico icon="lucide:info" class="ml-1 opacity-70" />
-          <span>Clique sur une catégorie pour voir ses opérations</span>
+          <span>{props.hint ?? "Clique sur une catégorie pour voir ses opérations"}</span>
         </li>
       </Show>
     </ul>

@@ -65,13 +65,17 @@ export function TipRow(props: { color?: string; label: string; value: string; st
   );
 }
 
-export function LegendItem(props: { color: string; label: string; shape?: "rect" | "line" }) {
+export function LegendItem(props: { color: string; label: string; shape?: "rect" | "line" | "dash" }) {
   return (
     <span class="text-ink-2 inline-flex items-center gap-1.5 text-xs">
-      <span
-        class={props.shape === "line" ? "h-0.5 w-3.5 rounded-full" : "size-2.5 rounded-[3px]"}
-        style={{ background: props.color }}
-      />
+      <Show
+        when={props.shape === "dash"}
+        fallback={
+          <span class={props.shape === "line" ? "h-0.5 w-3.5 rounded-full" : "size-2.5 rounded-[3px]"} style={{ background: props.color }} />
+        }
+      >
+        <span class="w-3.5 border-t-2 border-dashed" style={{ "border-color": props.color }} />
+      </Show>
       {props.label}
     </span>
   );

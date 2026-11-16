@@ -590,6 +590,8 @@ struct TxQuery {
     hide_transfers: Option<bool>,
     /// « only » : seulement les opérations exclues.
     excluded: Option<String>,
+    /// « out » : dépenses qu'aucun poste du budget actif n'attrape.
+    budget: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
 }
@@ -639,6 +641,19 @@ async fn transactions(State(app): State<Arc<AppState>>, Query(q): Query<TxQuery>
     }
     if q.excluded.as_deref() == Some("only") {
         wh.push("l.excluded = 1".into());
+    }
+    if q.budget.as_deref() == Some("out") {
+        // Même règle que le suivi du budget (budget::line_matches) : bon sens, puis motif sinon catégorie.
+        wh.push(
+            "l.kind = 'expense' AND l.excluded = 0 AND NOT EXISTS (
+                SELECT 1 FROM budget_lines bl
+                WHERE bl.budget_id = (SELECT id FROM budgets ORDER BY is_active DESC, created_at DESC LIMIT 1)
+                  AND CASE WHEN bl.kind IN ('income', 'salary') THEN l.amount_cents > 0 ELSE l.amount_cents < 0 END
+                  AND CASE WHEN trim(COALESCE(bl.match, '')) <> ''
+                           THEN instr(upper(l.label || ' ' || COALESCE(l.counterparty, '') || ' ' || COALESCE(l.merchant, '')), upper(bl.match)) > 0
+                           ELSE bl.category_id IS NOT NULL AND bl.category_id = l.category_id END)"
+                .into(),
+        );
     }
     if q.hide_transfers == Some(true) && q.kind.as_deref() != Some("transfer") {
         wh.push("l.kind <> 'transfer'".into());

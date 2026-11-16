@@ -10,6 +10,7 @@ const NAV = [
   { href: "/", icon: "lucide:layout-dashboard", label: "Tableau de bord", end: true },
   { href: "/budget", icon: "lucide:calculator", label: "Budget" },
   { href: "/operations", icon: "lucide:list", label: "Opérations" },
+  { href: "/calendrier", icon: "lucide:calendar-days", label: "Calendrier" },
   { href: "/tendances", icon: "lucide:chart-column", label: "Tendances" },
   { href: "/bourse", icon: "lucide:chart-candlestick", label: "Bourse" },
   { href: "/categories", icon: "lucide:tags", label: "Catégories" },

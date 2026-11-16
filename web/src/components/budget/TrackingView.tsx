@@ -1,9 +1,12 @@
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { useNavigate } from "@solidjs/router";
+import { createMemo, createResource, createSignal, For, Show } from "solid-js";
 import { api, type Budget, type BudgetLine, type LineTrack, type RecurringItem, type Tracking } from "../../api";
 import { activeIn, periodTotals, sections } from "../../budget";
 import { dayLabel, money, money0, monthLong, percent } from "../../format";
 import { errorText, store } from "../../store";
-import { Card, CategoryIcon, Empty, Ico } from "../ui";
+import { BarList, type BarRow } from "../charts/BarList";
+import { CumulativeLine } from "../charts/CumulativeLine";
+import { Card, CategoryIcon, Empty, Ico, Spinner } from "../ui";
 import type { LineDraft } from "./LineDialog";
 
 const CADENCE: Record<RecurringItem["cadence"], string> = { weekly: "hebdo", monthly: "mensuel", quarterly: "trimestriel", yearly: "annuel" };
@@ -40,6 +43,39 @@ export function TrackingView(props: {
       }, 0),
   );
   const unbudgetedTotal = () => t().unbudgeted.reduce((a, c) => a + Math.max(c.actual_cents, 0), 0);
+  const navigate = useNavigate();
+
+  // Courbe du mois (cumul jour par jour) : même source que le tableau de bord.
+  const [summary] = createResource(() => ({ m: t().month, v: store.version() }), ({ m }) => api.summary(m));
+  // Fin de mois estimée : déjà dépensé + ce qui reste prévu sur les postes pas encore passés.
+  const projection = () => (t().is_current_month && remaining() > 0 ? t().actual_expense_cents + remaining() : null);
+
+  // Réel / prévu par section (postes de dépense reliés à des opérations), puis le hors budget.
+  const sectionRows = createMemo((): BarRow[] => {
+    const acc = new Map<string, { actual: number; planned: number }>();
+    for (const l of props.budget.lines) {
+      const tr = byLine().get(l.id);
+      if (l.kind !== "expense" || !activeIn(l, t().month) || tr?.actual_cents == null) continue;
+      const a = acc.get(l.section) ?? { actual: 0, planned: 0 };
+      a.actual += tr.actual_cents;
+      a.planned += tr.planned_cents ?? 0;
+      acc.set(l.section, a);
+    }
+    const rows: BarRow[] = [...acc]
+      .filter(([, a]) => a.actual > 0 || a.planned > 0)
+      .sort((a, b) => b[1].planned - a[1].planned || b[1].actual - a[1].actual)
+      .map(([name, a]) => ({ key: `s:${name}`, category: null, icon: "lucide:folder", label: name || "Sans section", value: a.actual, reference: a.planned }));
+    if (unbudgetedTotal() > 0)
+      rows.push({
+        key: "out",
+        category: null,
+        icon: "lucide:circle-off",
+        label: "Hors budget",
+        value: unbudgetedTotal(),
+        onClick: () => navigate(`/operations?budget=out&month=${t().month}`),
+      });
+    return rows;
+  });
 
   const setPlanned = async (l: BudgetLine, cents: number) => {
     if (!period()) return;
@@ -121,6 +157,32 @@ export function TrackingView(props: {
           <div class="text-3xl leading-none font-semibold">{money0(unbudgetedTotal())}</div>
           <div class="text-muted text-sm">dépenses sans poste ce mois-ci</div>
         </div>
+      </div>
+
+      {/* Analyse du mois */}
+      <div class="grid gap-5 lg:grid-cols-5">
+        <Card
+          class="lg:col-span-3"
+          title="Rythme des dépenses"
+          subtitle={t().is_current_month ? "Cumul depuis le 1er, comparé au prévu et aux mois précédents" : "Cumul sur le mois, comparé au prévu et aux mois précédents"}
+        >
+          <Show when={summary.latest} fallback={<div class="flex h-[260px] items-center justify-center"><Spinner class="loading-md" /></div>}>
+            <CumulativeLine
+              current={summary.latest!.cumulative_current}
+              average={summary.latest!.cumulative_average}
+              days={summary.latest!.days_in_month}
+              monthLabel={monthLong(t().month)}
+              target={planned()?.expense || null}
+              projection={projection()}
+              height={380}
+            />
+          </Show>
+        </Card>
+        <Card class="lg:col-span-2" title="Réel / prévu par section" subtitle={t().is_current_month ? "Dépenses à ce jour" : "Dépenses du mois"}>
+          <Show when={sectionRows().length} fallback={<Empty icon="lucide:chart-bar" title="Aucune dépense rattachée ce mois-ci" />}>
+            <BarList rows={sectionRows()} total={t().actual_expense_cents} referenceLabel="prévu" hint="Hors budget : clique pour voir les opérations" />
+          </Show>
+        </Card>
       </div>
 
       {/* Postes par section */}

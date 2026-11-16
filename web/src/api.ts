@@ -374,6 +374,7 @@ export interface TxFilters {
   source?: string;
   hide_transfers?: boolean;
   excluded?: string;
+  budget?: string;
 }
 
 export const api = {
