@@ -52,9 +52,6 @@ dans Docker, avec Qwen3-4B quantifié AWQ (~9 Go de RAM une fois chargé) :
 Le port 8000 n'est publié que sur 127.0.0.1. Tout autre serveur compatible OpenAI convient
 (`[ai] provider = "vllm"`, `url = …/v1`), ainsi qu'Ollama (`provider = "ollama"`).
 
-Développement du frontend avec rechargement à chaud : `cd web && pnpm dev` (<http://localhost:5173>,
-l'API est relayée vers le serveur Rust sur 9890).
-
 Côté Enable Banking (application **Production**) :
 
 | Champ | Valeur |
@@ -66,6 +63,66 @@ Côté Enable Banking (application **Production**) :
 Ranger la clé privée hors du dépôt : `~/.config/bank-analysis/<app_id>.pem` (chmod 600),
 puis « Activate by linking accounts » pour lier ses comptes. Une banque doit être autorisée
 via le même pays que lors du linking (`countries = ["FR", "FI"]`).
+
+## Développement
+
+Prérequis : Rust stable récent (édition 2024), Node ≥ 20 et pnpm ; Docker seulement pour l'IA locale.
+
+**Utiliser une instance de dev séparée.** Sans `BKS_CONFIG`, le binaire lit `config.toml`, donc la
+vraie base : migrations, recatégorisation et import de `budget-seed.json` s'y appliquent dès le
+démarrage. Une config de dev à part, avec sa propre base et ses propres ports :
+
+```bash
+mkdir -p dev
+cat > dev/config.toml <<'EOF'
+[server]
+public_url  = "http://localhost:19889"   # « localhost » et pas une IP : exigé par WebAuthn
+public_addr = "127.0.0.1:19889"
+local_addr  = "127.0.0.1:19890"
+database    = "dev/bank.db"              # budget-seed.json est cherché dans ce dossier
+web_dir     = "web/dist"
+
+[ai]
+enabled = false                          # ou laisser vLLM / Ollama tourner
+EOF
+```
+
+Pour travailler sur de vraies données, partir d'une **copie** de la base (pas d'un `cp` :
+le serveur en cours a un journal WAL) :
+
+```bash
+python3 -c "import sqlite3; sqlite3.connect('file:data/bank.db?mode=ro', uri=True).backup(sqlite3.connect('dev/bank.db'))"
+```
+
+Puis deux terminaux :
+
+```bash
+# 1. backend (recompiler et relancer après chaque modification Rust)
+BKS_CONFIG=dev/config.toml cargo run
+
+# 2. frontend avec rechargement à chaud → http://localhost:5173
+cd web && pnpm install && BKS_API=http://127.0.0.1:19890 pnpm dev
+```
+
+Vite relaie `/api` vers `BKS_API` (par défaut `127.0.0.1:9890`, l'instance principale).
+L'interface locale ne demande pas de connexion ; les passkeys ne servent qu'à l'accès distant.
+
+Vérifications avant de commiter :
+
+```bash
+cargo test && cargo clippy
+(cd web && pnpm build)       # tsc --noEmit puis build de production
+```
+
+En production, le serveur sert `web/dist` : après une modification du frontend, refaire
+`pnpm build` puis recharger la page ; après une modification Rust, `cargo build --release`
+et relancer le binaire.
+
+## Déploiement
+
+Image tout-en-un (`Dockerfile`, publiée sur `ghcr.io/linventif/bank-n-budget-analysis` par la CI à chaque
+push sur `main`) et déploiement sur Proxmox avec Terraform (`infra/proxmox/`) :
+voir [docs/deployment/proxmox.md](docs/deployment/proxmox.md).
 
 ## Catégorisation
 

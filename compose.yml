@@ -1,0 +1,20 @@
+# Stack de production : l'image publiée par la CI (ghcr.io), rien n'est compilé sur le serveur.
+# Déployée sur Proxmox par infra/proxmox (qui écrit config.toml, eb.pem et .env à côté de ce fichier).
+#
+# config.toml doit utiliser les chemins du conteneur : database = "/data/bank.db",
+# web_dir = "/app/web/dist", private_key = "/etc/bks/eb.pem", écoutes sur 0.0.0.0:9889 / 0.0.0.0:9890.
+
+services:
+  bks:
+    image: ghcr.io/linventif/bank-n-budget-analysis:${IMAGE_TAG:-latest}
+    volumes:
+      - bks-data:/data
+      - ./config.toml:/etc/bks/config.toml:ro
+      - ./eb.pem:/etc/bks/eb.pem:ro
+    ports:
+      - "127.0.0.1:9889:9889" # public : derrière le tunnel uniquement
+      - "127.0.0.1:9890:9890" # interface locale sans authentification : jamais exposée
+    restart: unless-stopped
+
+volumes:
+  bks-data:

@@ -146,7 +146,11 @@ impl Config {
         if !cfg.server.public_url.starts_with("https://") && !local_http {
             bail!("server.public_url doit commencer par https://");
         }
-        if !cfg.server.public_addr.ip().is_loopback() || !cfg.server.local_addr.ip().is_loopback() {
+        // Dans l'image Docker (BKS_CONTAINER=1), 0.0.0.0 est l'interface du conteneur : l'exposition réelle est
+        // décidée par les ports publiés (loopback, ou filtrés : voir infra/proxmox). Jamais une autre adresse.
+        let in_container = std::env::var("BKS_CONTAINER").is_ok_and(|v| v == "1");
+        let bind_ok = |ip: std::net::IpAddr| ip.is_loopback() || (in_container && ip.is_unspecified());
+        if !bind_ok(cfg.server.public_addr.ip()) || !bind_ok(cfg.server.local_addr.ip()) {
             bail!("public_addr et local_addr doivent écouter sur 127.0.0.1 (le tunnel s'occupe de l'exposition)");
         }
         if cfg.server.public_addr.port() == cfg.server.local_addr.port() {

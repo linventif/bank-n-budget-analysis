@@ -3,7 +3,9 @@
 # Secrets et données bancaires : jamais dans git
 /config.toml
 /data/
+/dev/
 *.pem
+!/infra/proxmox/tests/fixtures/eb.pem
 *.key
 *.db
 *.db-shm

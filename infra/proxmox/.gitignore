@@ -1,0 +1,8 @@
+.terraform/
+# Local state holds every generated secret and the rendered .env values.
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+tfplan
+crash.log

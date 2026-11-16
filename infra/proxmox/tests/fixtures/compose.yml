@@ -1,0 +1,4 @@
+# Dummy compose file for terraform test: only read with file(), never parsed.
+services:
+  app:
+    image: example/app:latest

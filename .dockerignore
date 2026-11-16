@@ -1,0 +1,8 @@
+# Jamais dans l'image : secrets, données, artefacts locaux.
+*
+!Cargo.toml
+!Cargo.lock
+!src/
+!web/
+web/node_modules/
+web/dist/
