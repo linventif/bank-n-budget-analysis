@@ -5,7 +5,7 @@
 # Valeurs interpolées depuis le .env écrit par Terraform (IMAGE_TAG, COMPOSE_PROFILES, ADMIN_BIND).
 
 services:
-  # Le tunnel Cloudflare vise http://localhost:9889 (bks.example.com).
+  # Le tunnel Cloudflare vise http://localhost:9889 pour le nom public configuré.
   # 9890 (interface locale, sans authentification) : loopback, ou l'IP du conteneur filtrée par bksctl
   # pour n'accepter que l'hôte Proxmox (accès par tunnel SSH).
   bks:

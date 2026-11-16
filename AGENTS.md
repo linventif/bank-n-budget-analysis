@@ -4,7 +4,7 @@
 
 - Lire `README.md` pour le développement et `docs/deployment/proxmox.md` avant toute opération de déploiement.
 - L'application Rust et SolidJS est déployée avec Docker Compose dans un LXC Proxmox. La configuration Terraform est dans `infra/proxmox/`.
-- La cible configurée est `pve-colloc`, CT `111`, IP `10.10.10.21/24`, domaine `bks.example.com`. Vérifier que l'identifiant et l'IP sont toujours libres avant une première création.
+- La cible configurée est `pve-colloc`, CT `111`, IP `10.10.10.21/24`. Le domaine public est défini par `public_url` dans `infra/proxmox/terraform.tfvars` (non versionné). Vérifier que l'identifiant et l'IP sont toujours libres avant une première création.
 - Le bridge `vmbr1`, le stockage `dir-gmi` et le template sont partagés avec d'autres projets : les référencer, sans les modifier ni les importer dans cet état Terraform. Ne pas intervenir sur gmod dans le cadre d'un déploiement de bks.
 - La branche locale à la reprise est `master`, qui suit `origin/main`. Le workflow de publication est déclenché par les pushes sur `main` : vérifier la branche distante visée avant tout push.
 - Des modifications locales de l'interface et du déploiement préexistent à cette reprise. Les préserver et vérifier le périmètre avant tout commit.
@@ -23,6 +23,7 @@
 ## Secrets et données
 
 - `config.toml`, `infra/proxmox/terraform.tfvars`, les plans et états Terraform, les clés privées et les données bancaires restent hors de Git. Les plans et états peuvent contenir les secrets en clair : ne pas les afficher intégralement, les joindre ou les publier.
+- Le domaine public réel de l'application reste dans les configurations privées. Utiliser `bks.example.com` dans la documentation, les commentaires, les exemples et les valeurs par défaut versionnés ; ne pas y recopier le domaine depuis les fichiers locaux.
 - La configuration Enable Banking, l'email et les clés de marché existent déjà dans les fichiers locaux. Les vérifier sans afficher les secrets avant de demander des informations à l'utilisateur.
 - La clé Enable Banking reste dans `~/.config/bank-analysis/`, hors du dépôt. Son chemin configuré est `eb_private_key_file`.
 - Ne jamais lancer le binaire `bks`, `cargo run` ou le binaire de release sans une configuration de développement explicite : le démarrage peut migrer la vraie base `data/bank.db` et importer son budget.

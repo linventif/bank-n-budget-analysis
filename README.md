@@ -54,6 +54,8 @@ Le port 8000 n'est publié que sur 127.0.0.1. Tout autre serveur compatible Open
 
 Côté Enable Banking (application **Production**) :
 
+Remplacer `bks.example.com` par le nom d'hôte défini dans `server.public_url`.
+
 | Champ | Valeur |
 |---|---|
 | Allowed redirect URLs | `https://bks.example.com/callback` |

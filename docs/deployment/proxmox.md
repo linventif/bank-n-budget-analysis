@@ -70,11 +70,11 @@ ssh -p 2222 root@127.0.0.1 'pct push 111 /root/bks-import.db /root/bks-import.db
 # (même commande dans : terraform output ops → import_db)
 ```
 
-**5. Déplacer le nom public.** Dans Cloudflare, retirer `bks.example.com` des noms publics de l'ancien tunnel,
+**5. Déplacer le nom public.** Dans Cloudflare, retirer `bks.example.com` (à remplacer par votre domaine) des noms publics de l'ancien tunnel,
 puis l'ajouter au nouveau : service `http://localhost:9889`. Arrêter ensuite le connecteur `cloudflared` de
 la machine locale.
 
-**6. Contrôler** : connexion par passkey sur <https://bks.example.com>, puis une synchronisation. Le nom d'hôte
+**6. Contrôler** : connexion par passkey sur votre domaine public (exemple : <https://bks.example.com>), puis une synchronisation. Le nom d'hôte
 n'a pas changé : les passkeys et l'URL de retour Enable Banking restent valides.
 
 ## Au quotidien
@@ -115,7 +115,7 @@ commande que l'étape 4, dans l'autre sens.
 | Symptôme                                         | Piste                                                                                       |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------- |
 | `bks` redémarre en boucle                        | `bksctl logs bks` : config refusée, clé `.pem` invalide (« clé privée RSA invalide »)…       |
-| 502 / 1033 sur bks.example.com                      | tunnel : `bksctl logs cloudflared`, nom public → `http://localhost:9889`                     |
+| 502 / 1033 sur le domaine public                | tunnel : `bksctl logs cloudflared`, nom public → `http://localhost:9889`                     |
 | « Host non autorisé » sur l'interface locale     | ouvrir `http://localhost:9890` (le port local doit être 9890)                               |
 | 9890 injoignable par le tunnel SSH               | `bksctl admin-filter status`, `admin_access = true`, bonne IP dans la commande `-L`          |
 | `apply` échoue sur « admin port filter not in place » | iptables indisponible dans le conteneur : `pct exec 111 -- iptables -S DOCKER-USER`       |
