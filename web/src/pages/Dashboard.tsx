@@ -1,6 +1,7 @@
 import { A, useNavigate, useSearchParams } from "@solidjs/router";
 import { createMemo, createResource, For, Match, Show, Switch } from "solid-js";
 import { api, type Budget, type CatAmount, type Portfolio, type Summary, type Tracking } from "../api";
+import { budgetMonthLabel } from "../budget";
 import { BarList } from "../components/charts/BarList";
 import { Donut } from "../components/charts/Donut";
 import { CumulativeLine } from "../components/charts/CumulativeLine";
@@ -96,13 +97,17 @@ export default function Dashboard() {
               <Card
                 class="lg:col-span-3"
                 title="Rythme de dépenses"
-                subtitle={s()!.is_current_month ? "Dépenses cumulées depuis le 1er du mois" : "Dépenses cumulées sur le mois"}
+                subtitle="Cumul comparé aux deux mois précédents et à la moyenne"
               >
                 <CumulativeLine
                   current={s()!.cumulative_current}
                   average={s()!.cumulative_average}
                   days={s()!.days_in_month}
-                  monthLabel={monthLong(month()!)}
+                  monthLabel={budgetMonthLabel(activeBudget.latest, month()!)}
+                  previous={(s()!.cumulative_previous ?? []).map((curve) => ({
+                    label: budgetMonthLabel(activeBudget.latest, curve.month),
+                    values: curve.values,
+                  }))}
                 />
               </Card>
               <Budgets class="lg:col-span-2" budget={activeBudget.latest ?? null} tracking={budgetTrack.latest ?? null} />

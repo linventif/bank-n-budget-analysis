@@ -62,6 +62,7 @@ export interface Summary {
   monthly: (Totals & { month: string })[];
   cumulative_current: number[];
   cumulative_average: number[];
+  cumulative_previous: { month: string; values: number[] }[];
   days_in_month: number;
   top_merchants: { merchant: string; name: string; amount_cents: number; count: number; category_id: number | null }[];
 }

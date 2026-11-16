@@ -1,7 +1,7 @@
 import { useNavigate } from "@solidjs/router";
 import { createMemo, createResource, createSignal, For, Show } from "solid-js";
 import { api, type Budget, type BudgetLine, type LineTrack, type RecurringItem, type Tracking } from "../../api";
-import { activeIn, periodTotals, sections } from "../../budget";
+import { activeIn, budgetMonthLabel, periodTotals, sections } from "../../budget";
 import { dayLabel, money, money0, monthLong, percent } from "../../format";
 import { errorText, store } from "../../store";
 import { BarList, type BarRow } from "../charts/BarList";
@@ -47,6 +47,7 @@ export function TrackingView(props: {
 
   // Courbe du mois (cumul jour par jour) : même source que le tableau de bord.
   const [summary] = createResource(() => ({ m: t().month, v: store.version() }), ({ m }) => api.summary(m));
+  const chartSummary = () => !summary.error && summary.latest?.month === t().month ? summary.latest : undefined;
   // Fin de mois estimée : déjà dépensé + ce qui reste prévu sur les postes pas encore passés.
   const projection = () => (t().is_current_month && remaining() > 0 ? t().actual_expense_cents + remaining() : null);
 
@@ -164,14 +165,22 @@ export function TrackingView(props: {
         <Card
           class="lg:col-span-3"
           title="Rythme des dépenses"
-          subtitle={t().is_current_month ? "Cumul depuis le 1er, comparé au prévu et aux mois précédents" : "Cumul sur le mois, comparé au prévu et aux mois précédents"}
+          subtitle="Cumul comparé au prévu, aux deux mois précédents et à la moyenne"
         >
-          <Show when={summary.latest} fallback={<div class="flex h-[260px] items-center justify-center"><Spinner class="loading-md" /></div>}>
+          <Show when={chartSummary()} fallback={
+            <Show when={summary.loading} fallback={<Empty icon="lucide:chart-line" title={summary.error ? "Comparaison indisponible" : "Aucune donnée pour ce mois"} />}>
+              <div class="flex h-[260px] items-center justify-center"><Spinner class="loading-md" /></div>
+            </Show>
+          }>
             <CumulativeLine
-              current={summary.latest!.cumulative_current}
-              average={summary.latest!.cumulative_average}
-              days={summary.latest!.days_in_month}
-              monthLabel={monthLong(t().month)}
+              current={chartSummary()!.cumulative_current}
+              average={chartSummary()!.cumulative_average}
+              days={chartSummary()!.days_in_month}
+              monthLabel={`${monthLong(t().month)}${period() ? ` · ${period()!.name}` : ""}`}
+              previous={(chartSummary()!.cumulative_previous ?? []).map((curve) => ({
+                label: budgetMonthLabel(props.budget, curve.month),
+                values: curve.values,
+              }))}
               target={planned()?.expense || null}
               projection={projection()}
               height={380}

@@ -3,13 +3,14 @@ import { axisMoney, money0, signedMoney } from "../../format";
 import { LegendItem, niceTicks, TipRow, Tooltip, useWidth } from "./common";
 
 /**
- * Rythme de dépenses : cumul du mois choisi (série mise en avant) contre la moyenne
- * des mois précédents (contexte, en gris). En option : l'objectif du mois (trait pointillé
+ * Rythme de dépenses : mois choisi, deux mois précédents et moyenne (en gris).
+ * Les mois gardent leur durée réelle. En option : l'objectif du mois (trait pointillé
  * horizontal) et une estimation de fin de mois (pointillé prolongeant la courbe).
  */
 export function CumulativeLine(props: {
   current: number[];
   average: number[];
+  previous?: { label: string; values: number[] }[];
   days: number;
   monthLabel: string;
   target?: number | null;
@@ -20,9 +21,15 @@ export function CumulativeLine(props: {
   const [hover, setHover] = createSignal<number | null>(null);
   const H = props.height ?? 230;
   const pad = { top: 16, right: 88, bottom: 26, left: 52 };
+  const comparisons = createMemo(() => (props.previous ?? []).filter((curve) => curve.values.length).map((curve, i) => ({
+    ...curve,
+    color: i % 2 === 0 ? "var(--series-3)" : "var(--series-5)",
+    dash: i % 2 === 0 ? "7 4" : "2 4",
+  })));
+  const axisDays = () => Math.max(1, props.days, ...comparisons().map((curve) => curve.values.length));
 
   const ticks = createMemo(() => {
-    const vals = [...props.current, ...props.average, props.target ?? 0, props.projection ?? 0];
+    const vals = [...props.current, ...props.average, ...comparisons().flatMap((curve) => curve.values), props.target ?? 0, props.projection ?? 0];
     const lo = Math.min(0, ...vals);
     const hi = Math.max(0, ...vals);
     if (lo >= 0) return niceTicks(hi);
@@ -36,11 +43,11 @@ export function CumulativeLine(props: {
   const yMax = () => ticks()[ticks().length - 1] || 1;
   const plotW = () => Math.max(width() - pad.left - pad.right, 50);
   const plotH = () => H - pad.top - pad.bottom;
-  const x = (d: number) => pad.left + (props.days <= 1 ? 0 : (d / (props.days - 1)) * plotW());
+  const x = (d: number) => pad.left + (axisDays() <= 1 ? 0 : (d / (axisDays() - 1)) * plotW());
   const y = (v: number) => pad.top + plotH() - ((v - yMin()) / (yMax() - yMin() || 1)) * plotH();
   const path = (vals: number[]) => vals.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
 
-  const xTicks = () => [1, 8, 15, 22, props.days].filter((d, i, a) => d <= props.days && a.indexOf(d) === i);
+  const xTicks = () => [1, 8, 15, 22, axisDays()].filter((d, i, a) => d <= axisDays() && a.indexOf(d) === i);
   const lastIdx = () => props.current.length - 1;
   const curEnd = () => props.current[lastIdx()] ?? 0;
   const avgEnd = () => props.average[props.average.length - 1] ?? 0;
@@ -55,14 +62,17 @@ export function CumulativeLine(props: {
   const onMove = (e: PointerEvent) => {
     const rect = (e.currentTarget as SVGElement).getBoundingClientRect();
     const px = e.clientX - rect.left;
-    const d = Math.round(((px - pad.left) / plotW()) * (props.days - 1));
-    setHover(Math.min(Math.max(d, 0), props.days - 1));
+    const d = Math.round(((px - pad.left) / plotW()) * (axisDays() - 1));
+    setHover(Math.min(Math.max(d, 0), axisDays() - 1));
   };
 
   return (
     <div>
       <div class="mb-2 flex flex-wrap gap-4">
         <LegendItem color="var(--series-1)" label={props.monthLabel} shape="line" />
+        <For each={comparisons()}>
+          {(curve) => <LegendItem color={curve.color} label={curve.label} shape="dash" />}
+        </For>
         <Show when={props.average.length}>
           <LegendItem color="var(--ink-muted)" label="Moyenne des mois précédents" shape="line" />
         </Show>
@@ -79,7 +89,7 @@ export function CumulativeLine(props: {
           height={H}
           class="block touch-none"
           role="img"
-          aria-label={`Dépenses cumulées de ${props.monthLabel} comparées à la moyenne`}
+          aria-label={`Dépenses cumulées de ${props.monthLabel}${comparisons().length || props.average.length ? ` comparées à ${[...comparisons().map((curve) => curve.label), ...(props.average.length ? ["la moyenne"] : [])].join(" et ")}` : ""}`}
           onPointerMove={onMove}
           onPointerLeave={() => setHover(null)}
         >
@@ -116,6 +126,20 @@ export function CumulativeLine(props: {
             </text>
           </Show>
 
+          <For each={comparisons()}>
+            {(curve) => (
+              <path
+                d={path(curve.values)}
+                fill="none"
+                stroke={curve.color}
+                stroke-width="1.75"
+                stroke-dasharray={curve.dash}
+                stroke-linejoin="round"
+                stroke-linecap="round"
+              />
+            )}
+          </For>
+
           <Show when={props.average.length}>
             <path d={path(props.average)} fill="none" stroke="var(--ink-muted)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
             <Show when={avgLabel()}>
@@ -143,7 +167,7 @@ export function CumulativeLine(props: {
           </Show>
 
           <Show when={props.current.length}>
-            <path d={path(props.current)} fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+            <path d={path(props.current)} fill="none" stroke="var(--series-1)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />
             <circle cx={x(lastIdx())} cy={y(props.current[lastIdx()])} r="4" fill="var(--series-1)" stroke="var(--color-base-100)" stroke-width="2" />
             <text
               x={atEnd() ? x(lastIdx()) + 8 : x(lastIdx())}
@@ -161,6 +185,13 @@ export function CumulativeLine(props: {
 
           <Show when={hover() != null}>
             <line x1={x(hover()!)} x2={x(hover()!)} y1={pad.top} y2={pad.top + plotH()} stroke="var(--axis)" />
+            <For each={comparisons()}>
+              {(curve) => (
+                <Show when={curve.values[hover()!] != null}>
+                  <circle cx={x(hover()!)} cy={y(curve.values[hover()!])} r="4" fill={curve.color} stroke="var(--color-base-100)" stroke-width="2" />
+                </Show>
+              )}
+            </For>
             <Show when={props.average[hover()!] != null}>
               <circle cx={x(hover()!)} cy={y(props.average[hover()!])} r="4" fill="var(--ink-muted)" stroke="var(--color-base-100)" stroke-width="2" />
             </Show>
@@ -169,12 +200,15 @@ export function CumulativeLine(props: {
             </Show>
           </Show>
         </svg>
-        <Tooltip visible={hover() != null} x={hover() != null ? x(hover()!) : 0} y={pad.top} containerWidth={width()}>
+        <Tooltip visible={hover() != null} x={hover() != null ? x(hover()!) : 0} y={pad.top} containerWidth={width()} width={300}>
           <Show when={hover() != null}>
             <div class="mb-1 text-xs font-semibold">Jour {hover()! + 1}</div>
             <Show when={props.current[hover()!] != null}>
               <TipRow color="var(--series-1)" label={props.monthLabel} value={money0(props.current[hover()!])} />
             </Show>
+            <For each={comparisons()}>
+              {(curve) => <TipRow color={curve.color} label={curve.label} value={curve.values[hover()!] != null ? money0(curve.values[hover()!]) : "—"} />}
+            </For>
             <Show when={props.average[hover()!] != null}>
               <TipRow color="var(--ink-muted)" label="Moyenne" value={money0(props.average[hover()!])} />
             </Show>

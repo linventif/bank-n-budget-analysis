@@ -2,6 +2,23 @@
 //   reste à charge = dépenses − aides ; disponible = salaire − reste à charge.
 
 import type { Budget, BudgetLine, LineKind } from "./api";
+import { monthLong } from "./format";
+
+/** Même priorité que le suivi côté serveur : calendrier, plage datée, première période. */
+export const periodForMonth = (budget: Budget | null | undefined, month: string) => {
+  if (!budget) return null;
+  const calendarPeriod = budget.periods.find((p) => p.id === budget.calendar?.[month]);
+  if (calendarPeriod) return calendarPeriod;
+  const ordinal = (m: string) => Number(m.slice(0, 4)) * 12 + Number(m.slice(5, 7));
+  return budget.periods.find((p) => p.start_month && ordinal(month) >= ordinal(p.start_month) && ordinal(month) < ordinal(p.start_month) + p.months)
+    ?? budget.periods[0] ?? null;
+};
+
+/** Libellé d'une courbe : mois réel et période propre à ce mois (ex. Lille / Toulouse). */
+export const budgetMonthLabel = (budget: Budget | null | undefined, month: string) => {
+  const period = periodForMonth(budget, month);
+  return `${monthLong(month)}${period ? ` · ${period.name}` : ""}`;
+};
 
 export const KIND_LABEL: Record<LineKind, string> = {
   expense: "Dépense",

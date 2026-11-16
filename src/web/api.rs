@@ -254,8 +254,15 @@ struct Summary {
     monthly: Vec<MonthTotals>,
     cumulative_current: Vec<i64>,
     cumulative_average: Vec<i64>,
+    cumulative_previous: Vec<CumulativeMonth>,
     days_in_month: u32,
     top_merchants: Vec<MerchantSpend>,
+}
+
+#[derive(Serialize)]
+struct CumulativeMonth {
+    month: String,
+    values: Vec<i64>,
 }
 
 fn months_available(conn: &Connection) -> rusqlite::Result<Vec<String>> {
@@ -276,20 +283,23 @@ fn first_full_month(conn: &Connection) -> rusqlite::Result<Option<Ym>> {
 
 async fn summary(State(app): State<Arc<AppState>>, Query(q): Query<MonthQuery>) -> ApiResult<Summary> {
     let conn = app.db.lock().unwrap();
-    let months = months_available(&conn)?;
+    Ok(Json(summarize(&conn, q.month, today())?))
+}
+
+fn summarize(conn: &Connection, requested_month: Option<String>, t: chrono::NaiveDate) -> Result<Summary, ApiError> {
+    let months = months_available(conn)?;
     let balance_cents: i64 = conn.query_row(
         "SELECT COALESCE(SUM(balance_cents), 0) FROM accounts WHERE currency = 'EUR' AND closed_at IS NULL",
         [],
         |r| r.get(0),
     )?;
     let Some(last) = months.last().cloned() else {
-        return Ok(Json(Summary { balance_cents, ..Default::default() }));
+        return Ok(Summary { balance_cents, ..Default::default() });
     };
-    let month = q.month.filter(|m| months.contains(m)).unwrap_or(last);
+    let month = requested_month.filter(|m| months.contains(m)).unwrap_or(last);
     let sel = ym(&month).ok_or_else(|| ApiError::bad("mois invalide"))?;
     let first = ym(&months[0]).unwrap_or(sel);
-    let first_full = first_full_month(&conn)?.unwrap_or(first);
-    let t = today();
+    let first_full = first_full_month(conn)?.unwrap_or(first);
     let current = (t.year(), t.month());
 
     // Mois de référence pour les moyennes : jusqu'à 6 mois complets avant le mois choisi.
@@ -408,6 +418,11 @@ async fn summary(State(app): State<Arc<AppState>>, Query(q): Query<MonthQuery>) 
     let dim = days_in(sel);
     let shown_days = if sel == current { t.day() } else { dim };
     let cumulative_current: Vec<i64> = cumul(sel).into_iter().take(shown_days as usize).collect();
+    let cumulative_previous = (1..=2)
+        .map(|offset| add_months(sel, -offset))
+        .filter(|m| *m >= first)
+        .map(|m| CumulativeMonth { month: fmt_ym(m), values: cumul(m) })
+        .collect();
     let ref_curves: Vec<Vec<i64>> = refs.iter().map(|m| cumul(*m)).collect();
     let cumulative_average: Vec<i64> = if ref_curves.is_empty() {
         vec![]
@@ -438,7 +453,7 @@ async fn summary(State(app): State<Arc<AppState>>, Query(q): Query<MonthQuery>) 
         })?
         .collect::<Result<_, _>>()?;
 
-    Ok(Json(Summary {
+    Ok(Summary {
         is_current_month: sel == current,
         month: Some(month),
         months,
@@ -452,9 +467,10 @@ async fn summary(State(app): State<Arc<AppState>>, Query(q): Query<MonthQuery>) 
         monthly,
         cumulative_current,
         cumulative_average,
+        cumulative_previous,
         days_in_month: dim,
         top_merchants,
-    }))
+    })
 }
 
 // ---------- Tendances ----------
@@ -1160,4 +1176,86 @@ async fn connect(State(app): State<Arc<AppState>>, Json(b): Json<ConnectInput>) 
         })
         .await?;
     Ok(Json(json!({ "url": resp.url })))
+}
+
+#[cfg(test)]
+mod summary_tests {
+    use super::*;
+
+    fn conn() -> Connection {
+        let conn = db::open(std::path::Path::new(":memory:")).unwrap();
+        conn.execute("INSERT INTO accounts (hash, aspsp_name, currency, raw) VALUES ('test', 'Test', 'EUR', '{}')", []).unwrap();
+        conn
+    }
+
+    fn add(conn: &Connection, id: i64, day: &str, amount: i64, kind: &str, excluded: bool) {
+        let category: i64 = conn.query_row("SELECT id FROM categories WHERE kind = ?1 ORDER BY id LIMIT 1", [kind], |r| r.get(0)).unwrap();
+        conn.execute(
+            "INSERT INTO transactions (account_hash, fingerprint, status, booking_date, amount_cents, currency, label, raw, first_seen, category_id, excluded)
+             VALUES ('test', ?1, 'BOOK', ?2, ?3, 'EUR', 'Test', '{}', ?2, ?4, ?5)",
+            params![id.to_string(), day, amount, category, excluded],
+        ).unwrap();
+    }
+
+    fn report(conn: &Connection, month: &str, day: &str) -> Summary {
+        summarize(conn, Some(month.into()), chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").unwrap())
+            .unwrap_or_else(|error| panic!("{}", error.message))
+    }
+
+    #[test]
+    fn previous_months_cross_year_and_keep_refunds_and_exclusions() {
+        let conn = conn();
+        add(&conn, 1, "2026-11-30", -2000, "expense", false);
+        add(&conn, 2, "2026-12-01", -1000, "expense", false);
+        add(&conn, 3, "2026-12-31", 200, "expense", false);
+        add(&conn, 4, "2026-12-02", -99000, "expense", true);
+        add(&conn, 5, "2026-12-03", -50000, "transfer", false);
+        add(&conn, 6, "2026-12-04", 70000, "income", false);
+        add(&conn, 7, "2027-01-02", -500, "expense", false);
+        let summary = report(&conn, "2027-01", "2027-01-15");
+        assert_eq!(summary.cumulative_current.len(), 15);
+        assert_eq!(summary.cumulative_current.last(), Some(&500));
+        assert_eq!(summary.cumulative_previous.iter().map(|m| m.month.as_str()).collect::<Vec<_>>(), ["2026-12", "2026-11"]);
+        assert_eq!(summary.cumulative_previous[0].values.len(), 31);
+        assert_eq!(summary.cumulative_previous[0].values[29], 1000);
+        assert_eq!(summary.cumulative_previous[0].values[30], 800);
+        assert_eq!(summary.cumulative_previous[1].values.len(), 30);
+        assert_eq!(summary.cumulative_previous[1].values.last(), Some(&2000));
+    }
+
+    #[test]
+    fn previous_months_keep_february_twenty_ninth() {
+        let conn = conn();
+        add(&conn, 1, "2024-01-31", -100, "expense", false);
+        add(&conn, 2, "2024-02-29", -300, "expense", false);
+        add(&conn, 3, "2024-03-01", -500, "expense", false);
+        let summary = report(&conn, "2024-03", "2024-03-15");
+        assert_eq!(summary.cumulative_previous[0].month, "2024-02");
+        assert_eq!(summary.cumulative_previous[0].values.len(), 29);
+        assert_eq!(summary.cumulative_previous[0].values[27], 0);
+        assert_eq!(summary.cumulative_previous[0].values[28], 300);
+        assert_eq!(summary.cumulative_previous[1].values.len(), 31);
+    }
+
+    #[test]
+    fn previous_months_include_zero_activity_without_skipping_a_month() {
+        let conn = conn();
+        add(&conn, 1, "2026-11-01", -900, "expense", false);
+        add(&conn, 2, "2027-01-01", -100, "expense", false);
+        let summary = report(&conn, "2027-01", "2027-01-15");
+        assert_eq!(summary.cumulative_previous[0].month, "2026-12");
+        assert_eq!(summary.cumulative_previous[0].values, vec![0; 31]);
+        assert_eq!(summary.cumulative_previous[1].month, "2026-11");
+        assert_eq!(summary.cumulative_previous[1].values.last(), Some(&900));
+    }
+
+    #[test]
+    fn previous_months_do_not_invent_history_before_the_first_month() {
+        let conn = conn();
+        let empty = report(&conn, "2027-01", "2027-01-15");
+        assert!(empty.cumulative_previous.is_empty());
+        add(&conn, 1, "2027-01-03", -100, "expense", false);
+        let first = report(&conn, "2027-01", "2027-01-15");
+        assert!(first.cumulative_previous.is_empty());
+    }
 }

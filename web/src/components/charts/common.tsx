@@ -37,14 +37,15 @@ export function columnPath(x: number, y: number, w: number, h: number, r = 4) {
 }
 
 /** Infobulle positionnée dans le conteneur relatif du graphique ; le texte est rendu par Solid (échappé). */
-export function Tooltip(props: { x: number; y: number; containerWidth: number; children: JSX.Element; visible: boolean }) {
-  const left = () => Math.min(Math.max(props.x + 14, 8), props.containerWidth - 216);
+export function Tooltip(props: { x: number; y: number; containerWidth: number; children: JSX.Element; visible: boolean; width?: number }) {
+  const boxWidth = () => Math.min(props.width ?? 208, Math.max(props.containerWidth - 16, 0));
+  const left = () => Math.min(Math.max(props.x + 14, 8), Math.max(props.containerWidth - boxWidth() - 8, 8));
   return (
     <Show when={props.visible}>
       <div
         role="tooltip"
-        class="card-surface pointer-events-none absolute z-10 w-[208px] px-3 py-2 text-sm shadow-lg"
-        style={{ left: `${left()}px`, top: `${Math.max(props.y - 12, 0)}px` }}
+        class="card-surface pointer-events-none absolute z-10 px-3 py-2 text-sm shadow-lg"
+        style={{ width: `${boxWidth()}px`, left: `${left()}px`, top: `${Math.max(props.y - 12, 0)}px` }}
       >
         {props.children}
       </div>
