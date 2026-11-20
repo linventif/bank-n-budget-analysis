@@ -24,6 +24,8 @@ export interface Account {
   iban: string | null;
   currency: string;
   balance_cents: number | null;
+  pending_cents: number;
+  available_cents: number | null;
   balance_date: string | null;
   last_sync: string | null;
   last_error: string | null;
@@ -53,6 +55,7 @@ export interface Summary {
   months: string[];
   is_current_month: boolean;
   balance_cents: number;
+  pending_cents: number;
   totals: Totals;
   prev: Totals;
   avg: Totals;

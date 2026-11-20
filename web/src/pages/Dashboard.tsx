@@ -300,7 +300,10 @@ function Kpis(props: { s: Summary; portfolio?: Portfolio | null }) {
           Sur les comptes <Ico icon="lucide:arrow-up-right" class="text-xs" />
         </div>
         <div class="text-3xl leading-none font-semibold">{money0(s().balance_cents)}</div>
-        <span class="text-muted text-sm">solde actuel, tous comptes</span>
+        <span class="text-muted text-sm">
+          solde actuel, tous comptes
+          <Show when={s().pending_cents < 0}> · {money0(-s().pending_cents)} en attente déduits</Show>
+        </span>
         <Show when={props.portfolio}>
           <span class="text-ink-2 text-sm">
             + {money0(props.portfolio!.latest?.value_cents ?? props.portfolio!.net_invested_cents)} en compte-titres

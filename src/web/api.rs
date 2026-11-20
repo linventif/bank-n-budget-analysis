@@ -144,6 +144,14 @@ async fn status(State(app): State<Arc<AppState>>) -> ApiResult<Value> {
 
 // ---------- Comptes ----------
 
+/// Dépenses en attente (≤ 0) à retrancher du solde du compte `a`.
+/// Seuls les soldes comptabilisés (CLBD, ITBD, OPBD) les excluent : les soldes disponibles
+/// (ITAV, CLAV) et prévisionnels (XPCD) les déduisent déjà côté banque.
+const PENDING_SQL: &str = "CASE WHEN a.balance_type IN ('CLBD', 'ITBD', 'OPBD') THEN
+        (SELECT COALESCE(SUM(t.amount_cents), 0) FROM transactions t
+         WHERE t.account_hash = a.hash AND t.status <> 'BOOK' AND t.amount_cents < 0 AND t.currency = a.currency)
+    ELSE 0 END";
+
 #[derive(Serialize)]
 struct Account {
     id: String,
@@ -152,7 +160,12 @@ struct Account {
     product: Option<String>,
     iban: Option<String>,
     currency: String,
+    /// Solde renvoyé par la banque.
     balance_cents: Option<i64>,
+    /// Dépenses en attente non comprises dans ce solde (≤ 0).
+    pending_cents: i64,
+    /// Solde après ces dépenses en attente.
+    available_cents: Option<i64>,
     balance_date: Option<String>,
     last_sync: Option<String>,
     last_error: Option<String>,
@@ -167,16 +180,19 @@ async fn accounts(State(app): State<Arc<AppState>>) -> ApiResult<Vec<Account>> {
     let conn = app.db.lock().unwrap();
     let now = db::now();
     let rows = conn
-        .prepare(
+        .prepare(&format!(
             "SELECT a.hash, a.aspsp_name, a.name, a.product, a.iban, a.currency, a.balance_cents, a.balance_date,
                     a.last_sync, a.last_error, s.valid_until, s.status,
-                    (SELECT COUNT(*) FROM transactions t WHERE t.account_hash = a.hash), a.closed_at, a.cash_account_type
+                    (SELECT COUNT(*) FROM transactions t WHERE t.account_hash = a.hash), a.closed_at, a.cash_account_type,
+                    {PENDING_SQL}
              FROM accounts a LEFT JOIN sessions s ON s.session_id = a.session_id
              ORDER BY a.closed_at IS NOT NULL, a.aspsp_name, a.cash_account_type, a.name",
-        )?
+        ))?
         .query_map([], |r| {
             let valid_until: Option<String> = r.get(10)?;
             let status: Option<String> = r.get(11)?;
+            let balance_cents: Option<i64> = r.get(6)?;
+            let pending_cents: i64 = r.get(15)?;
             Ok(Account {
                 id: r.get(0)?,
                 bank: r.get(1)?,
@@ -184,7 +200,9 @@ async fn accounts(State(app): State<Arc<AppState>>) -> ApiResult<Vec<Account>> {
                 product: r.get(3)?,
                 iban: r.get::<_, Option<String>>(4)?.map(|i| mask_iban(&i)),
                 currency: r.get(5)?,
-                balance_cents: r.get(6)?,
+                balance_cents,
+                pending_cents,
+                available_cents: balance_cents.map(|b| b + pending_cents),
                 balance_date: r.get(7)?,
                 last_sync: r.get(8)?,
                 last_error: r.get(9)?,
@@ -244,7 +262,10 @@ struct Summary {
     month: Option<String>,
     months: Vec<String>,
     is_current_month: bool,
+    /// Solde des comptes en euros, dépenses en attente déduites.
     balance_cents: i64,
+    /// Dépenses en attente déjà retranchées de `balance_cents` (≤ 0).
+    pending_cents: i64,
     totals: Totals,
     prev: Totals,
     avg: Totals,
@@ -288,13 +309,17 @@ async fn summary(State(app): State<Arc<AppState>>, Query(q): Query<MonthQuery>) 
 
 fn summarize(conn: &Connection, requested_month: Option<String>, t: chrono::NaiveDate) -> Result<Summary, ApiError> {
     let months = months_available(conn)?;
-    let balance_cents: i64 = conn.query_row(
-        "SELECT COALESCE(SUM(balance_cents), 0) FROM accounts WHERE currency = 'EUR' AND closed_at IS NULL",
+    let (balance_cents, pending_cents): (i64, i64) = conn.query_row(
+        &format!(
+            "SELECT COALESCE(SUM(balance_cents + pending), 0), COALESCE(SUM(pending), 0)
+             FROM (SELECT a.balance_cents, {PENDING_SQL} AS pending FROM accounts a
+                   WHERE a.currency = 'EUR' AND a.closed_at IS NULL AND a.balance_cents IS NOT NULL)"
+        ),
         [],
-        |r| r.get(0),
+        |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
     let Some(last) = months.last().cloned() else {
-        return Ok(Summary { balance_cents, ..Default::default() });
+        return Ok(Summary { balance_cents, pending_cents, ..Default::default() });
     };
     let month = requested_month.filter(|m| months.contains(m)).unwrap_or(last);
     let sel = ym(&month).ok_or_else(|| ApiError::bad("mois invalide"))?;
@@ -458,6 +483,7 @@ fn summarize(conn: &Connection, requested_month: Option<String>, t: chrono::Naiv
         month: Some(month),
         months,
         balance_cents,
+        pending_cents,
         totals: get(sel),
         prev: get(add_months(sel, -1)),
         avg,
@@ -1247,6 +1273,33 @@ mod summary_tests {
         assert_eq!(summary.cumulative_previous[0].values, vec![0; 31]);
         assert_eq!(summary.cumulative_previous[1].month, "2026-11");
         assert_eq!(summary.cumulative_previous[1].values.last(), Some(&900));
+    }
+
+    #[test]
+    fn balance_deducts_pending_expenses_only_from_booked_balances() {
+        let conn = conn();
+        conn.execute("UPDATE accounts SET balance_cents = 10000, balance_type = 'CLBD' WHERE hash = 'test'", []).unwrap();
+        conn.execute(
+            "INSERT INTO accounts (hash, aspsp_name, currency, raw, balance_cents, balance_type) VALUES ('rev', 'Rev', 'EUR', '{}', 5600, 'ITAV')",
+            [],
+        )
+        .unwrap();
+        let pending = |account: &str, id: &str, amount: i64| {
+            conn.execute(
+                "INSERT INTO transactions (account_hash, fingerprint, status, transaction_date, amount_cents, currency, label, raw, first_seen)
+                 VALUES (?1, ?2, 'PDNG', '2026-11-15', ?3, 'EUR', 'Test', '{}', '2026-11-15')",
+                params![account, id, amount],
+            )
+            .unwrap();
+        };
+        pending("test", "p1", -4000);
+        pending("test", "p2", -373);
+        pending("test", "p3", 500); // un remboursement en attente n'est pas compté d'avance
+        pending("rev", "p4", -15673); // déjà déduit du solde disponible
+        add(&conn, 1, "2026-11-14", -1000, "expense", false); // comptabilisé : déjà dans le solde
+        let summary = report(&conn, "2026-11", "2026-11-20");
+        assert_eq!(summary.pending_cents, -4373);
+        assert_eq!(summary.balance_cents, 10000 - 4373 + 5600);
     }
 
     #[test]

@@ -45,7 +45,12 @@ export default function Accounts() {
                       </div>
                     </div>
                     <div>
-                      <div class="text-3xl font-semibold">{a.balance_cents != null ? money(a.balance_cents, a.currency) : "—"}</div>
+                      <div class="text-3xl font-semibold">{a.available_cents != null ? money(a.available_cents, a.currency) : "—"}</div>
+                      <Show when={a.pending_cents < 0 && a.balance_cents != null}>
+                        <div class="text-ink-2 text-xs" title="Opérations autorisées mais pas encore comptabilisées par la banque">
+                          {money(-a.pending_cents, a.currency)} en attente déduits · solde banque {money(a.balance_cents!, a.currency)}
+                        </div>
+                      </Show>
                       <div class="text-muted text-xs">
                         {a.tx_count} opérations · synchronisé {since(a.last_sync)}
                       </div>
